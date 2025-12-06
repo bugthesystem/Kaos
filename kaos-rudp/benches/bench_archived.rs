@@ -4,7 +4,9 @@
 //!
 //! Run: cargo bench -p kaos-rudp --features archive --bench bench_archived
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput, BatchSize};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 use kaos_archive::Archive;
 use kaos_rudp::ArchivedTransport;
 use std::net::SocketAddr;
@@ -30,9 +32,7 @@ fn bench_sync_archive(c: &mut Criterion) {
                         let archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
                         (archive, dir)
                     },
-                    |(archive, _dir)| {
-                        black_box(archive.append(black_box(msg)).unwrap())
-                    },
+                    |(archive, _dir)| black_box(archive.append(black_box(msg)).unwrap()),
                     BatchSize::NumIterations(100_000),
                 );
             },
@@ -83,9 +83,7 @@ fn bench_hot_path(c: &mut Criterion) {
                 let archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
                 (archive, dir)
             },
-            |(archive, _dir)| {
-                black_box(archive.append(black_box(&msg)).unwrap())
-            },
+            |(archive, _dir)| black_box(archive.append(black_box(&msg)).unwrap()),
             BatchSize::NumIterations(100_000),
         );
     });
@@ -119,13 +117,9 @@ fn bench_archived_transport(c: &mut Criterion) {
                     let dir = tempdir().unwrap();
                     let path = dir.path().join("archive");
 
-                    let mut transport = ArchivedTransport::new(
-                        local,
-                        remote,
-                        8192,
-                        &path,
-                        1024 * 1024 * 1024,
-                    ).unwrap();
+                    let mut transport =
+                        ArchivedTransport::new(local, remote, 8192, &path, 1024 * 1024 * 1024)
+                            .unwrap();
 
                     for _ in 0..count {
                         let _ = transport.send(black_box(msg));
@@ -146,9 +140,9 @@ fn bench_archived_transport(c: &mut Criterion) {
 /// Aeron typical: 8-15 M/s | Kaos: 120+ M/s
 fn bench_archive_tap_only(c: &mut Criterion) {
     use kaos::disruptor::{MessageRingBuffer, RingBufferConfig, RingBufferEntry};
+    use std::cell::UnsafeCell;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
-    use std::cell::UnsafeCell;
 
     struct SpscBuffer {
         buffer: UnsafeCell<MessageRingBuffer>,
@@ -175,10 +169,14 @@ fn bench_archive_tap_only(c: &mut Criterion) {
 
                     let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
 
-                    let config = RingBufferConfig::new(65536).unwrap()
-                        .with_consumers(1).unwrap();
+                    let config = RingBufferConfig::new(65536)
+                        .unwrap()
+                        .with_consumers(1)
+                        .unwrap();
                     let tap_buffer = MessageRingBuffer::new(config).unwrap();
-                    let tap_buffer = Arc::new(SpscBuffer { buffer: UnsafeCell::new(tap_buffer) });
+                    let tap_buffer = Arc::new(SpscBuffer {
+                        buffer: UnsafeCell::new(tap_buffer),
+                    });
 
                     let msg_count = Arc::new(AtomicU64::new(0));
                     let archived_seq = Arc::new(AtomicU64::new(0));
@@ -227,7 +225,9 @@ fn bench_archive_tap_only(c: &mut Criterion) {
                             loop {
                                 let buffer = unsafe { &*tap_buffer.buffer.get() };
                                 let slots = buffer.try_consume_batch(0, BATCH_SIZE);
-                                if slots.is_empty() { break; }
+                                if slots.is_empty() {
+                                    break;
+                                }
 
                                 for slot in &slots {
                                     let data = slot.data();
@@ -291,13 +291,9 @@ fn bench_archived_hot_path(c: &mut Criterion) {
                         let dir = tempdir().unwrap();
                         let path = dir.path().join("archive");
 
-                        let transport = ArchivedTransport::new(
-                            local,
-                            remote,
-                            8192,
-                            &path,
-                            64 * 1024 * 1024,
-                        ).unwrap();
+                        let transport =
+                            ArchivedTransport::new(local, remote, 8192, &path, 64 * 1024 * 1024)
+                                .unwrap();
 
                         (transport, dir)
                     },

@@ -46,17 +46,21 @@ fn main() {
     }
 
     let bind: SocketAddr = args[1].parse().expect("invalid bind address");
-    
+
     // Parse peer/group (skip flags)
-    let peer_arg = args.iter()
+    let peer_arg = args
+        .iter()
         .skip(2)
         .find(|a| !a.starts_with('-'))
         .map(|s| s.as_str());
-    
+
     let peer: SocketAddr = if echo {
         bind
     } else {
-        peer_arg.expect("missing peer/group address").parse().expect("invalid peer address")
+        peer_arg
+            .expect("missing peer/group address")
+            .parse()
+            .expect("invalid peer address")
     };
 
     // Get IPC paths (skip flags)
@@ -71,9 +75,13 @@ fn main() {
         paths.get(1).copied().unwrap_or("/tmp/kaos-recv"),
     );
 
-    let mode = if multicast { "[MULTICAST]" } 
-               else if cfg!(feature = "reliable") { "[RUDP]" } 
-               else { "" };
+    let mode = if multicast {
+        "[MULTICAST]"
+    } else if cfg!(feature = "reliable") {
+        "[RUDP]"
+    } else {
+        ""
+    };
     println!("kaos-driver{} {} → {}", mode, bind, peer);
     println!("IPC: {} / {}", send_path, recv_path);
 
@@ -125,7 +133,7 @@ fn wait_for_ipc(path: &str) -> Subscriber {
 
 fn create_multicast_socket(bind_port: u16, group: Ipv4Addr) -> std::io::Result<UdpSocket> {
     use std::net::SocketAddrV4;
-    
+
     let socket2 = socket2::Socket::new(
         socket2::Domain::IPV4,
         socket2::Type::DGRAM,
@@ -134,16 +142,16 @@ fn create_multicast_socket(bind_port: u16, group: Ipv4Addr) -> std::io::Result<U
     socket2.set_reuse_address(true)?;
     socket2.set_send_buffer_size(8 * 1024 * 1024)?;
     socket2.set_recv_buffer_size(8 * 1024 * 1024)?;
-    
+
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, bind_port);
     socket2.bind(&addr.into())?;
-    
+
     let socket: UdpSocket = socket2.into();
     socket.join_multicast_v4(&group, &Ipv4Addr::UNSPECIFIED)?;
     socket.set_multicast_loop_v4(true)?;
     socket.set_multicast_ttl_v4(1)?;
     socket.set_nonblocking(true)?;
-    
+
     Ok(socket)
 }
 
@@ -158,13 +166,13 @@ fn run_multicast(
         std::net::IpAddr::V4(ip) => ip,
         _ => panic!("multicast requires IPv4"),
     };
-    
+
     println!("Joining multicast group {}", group);
     let socket = create_multicast_socket(bind.port(), group).expect("multicast socket failed");
-    
+
     #[cfg(target_os = "linux")]
     run_multicast_linux(&socket, group_addr, from_app, to_app, running);
-    
+
     #[cfg(not(target_os = "linux"))]
     run_multicast_portable(&socket, group_addr, from_app, to_app, running);
 }
@@ -180,9 +188,9 @@ fn run_multicast_linux(
     use std::mem::MaybeUninit;
     let fd = socket.as_raw_fd();
     let dest_addr = socket2::SockAddr::from(dest);
-    
+
     let (mut sent, mut recvd, mut last) = (0u64, 0u64, Instant::now());
-    
+
     // Pre-allocate buffers
     let mut send_bufs = [[0u8; MSG_SIZE]; BATCH_SIZE];
     let mut send_iovecs: [libc::iovec; BATCH_SIZE] = unsafe { MaybeUninit::zeroed().assume_init() };
@@ -190,7 +198,7 @@ fn run_multicast_linux(
     let mut recv_bufs = [[0u8; MSG_SIZE]; BATCH_SIZE];
     let mut recv_iovecs: [libc::iovec; BATCH_SIZE] = unsafe { MaybeUninit::zeroed().assume_init() };
     let mut recv_msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { MaybeUninit::zeroed().assume_init() };
-    
+
     // Setup send msgs with multicast destination
     for i in 0..BATCH_SIZE {
         send_iovecs[i].iov_base = send_bufs[i].as_mut_ptr() as *mut _;
@@ -200,7 +208,7 @@ fn run_multicast_linux(
         send_msgs[i].msg_hdr.msg_name = dest_addr.as_ptr() as *mut _;
         send_msgs[i].msg_hdr.msg_namelen = dest_addr.len();
     }
-    
+
     // Setup recv msgs
     for i in 0..BATCH_SIZE {
         recv_iovecs[i].iov_base = recv_bufs[i].as_mut_ptr() as *mut _;
@@ -208,9 +216,12 @@ fn run_multicast_linux(
         recv_msgs[i].msg_hdr.msg_iov = &mut recv_iovecs[i];
         recv_msgs[i].msg_hdr.msg_iovlen = 1;
     }
-    
-    println!("Running multicast driver (sendmmsg/recvmmsg, batch={})", BATCH_SIZE);
-    
+
+    println!(
+        "Running multicast driver (sendmmsg/recvmmsg, batch={})",
+        BATCH_SIZE
+    );
+
     while running.load(Ordering::Relaxed) {
         // Batch messages from app
         let mut n_send = 0;
@@ -222,7 +233,7 @@ fn run_multicast_linux(
                 break;
             }
         }
-        
+
         // Send batch to multicast group
         if n_send > 0 {
             let n = unsafe { libc::sendmmsg(fd, send_msgs.as_mut_ptr(), n_send as u32, 0) };
@@ -230,7 +241,7 @@ fn run_multicast_linux(
                 sent += n as u64;
             }
         }
-        
+
         // Receive batch from multicast
         let n = unsafe {
             libc::recvmmsg(
@@ -250,12 +261,12 @@ fn run_multicast_linux(
                 }
             }
         }
-        
+
         if last.elapsed() > Duration::from_secs(5) {
             println!("  tx={} rx={}", sent, recvd);
             last = Instant::now();
         }
-        
+
         if n_send == 0 && n <= 0 {
             thread::yield_now();
         }
@@ -274,12 +285,15 @@ fn run_multicast_portable(
     let (mut sent, mut recvd, mut last) = (0u64, 0u64, Instant::now());
     let mut buf = [0u8; MSG_SIZE];
     let mut send_buf = [0u8; MSG_SIZE];
-    
+
     // Batch buffer for coalescing sends
     let mut batch: Vec<u64> = Vec::with_capacity(BATCH_SIZE);
-    
-    println!("Running multicast driver (batched sends, batch={})", BATCH_SIZE);
-    
+
+    println!(
+        "Running multicast driver (batched sends, batch={})",
+        BATCH_SIZE
+    );
+
     while running.load(Ordering::Relaxed) {
         // Collect batch from app
         batch.clear();
@@ -290,7 +304,7 @@ fn run_multicast_portable(
                 break;
             }
         }
-        
+
         // Send batch (amortizes syscall overhead by batching app reads)
         for &v in &batch {
             send_buf[..8].copy_from_slice(&v.to_le_bytes());
@@ -298,7 +312,7 @@ fn run_multicast_portable(
                 sent += 1;
             }
         }
-        
+
         // Receive (non-blocking)
         loop {
             match socket.recv_from(&mut buf) {
@@ -310,12 +324,12 @@ fn run_multicast_portable(
                 _ => break,
             }
         }
-        
+
         if last.elapsed() > Duration::from_secs(5) {
             println!("  tx={} rx={}", sent, recvd);
             last = Instant::now();
         }
-        
+
         if batch.is_empty() {
             thread::yield_now();
         }
@@ -497,7 +511,7 @@ fn run_linux(
 // UNICAST - Portable (macOS, etc)
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(feature = "reliable")))]
 fn run_portable(
     socket: &UdpSocket,
     from_app: &mut Subscriber,

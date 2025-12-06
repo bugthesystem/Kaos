@@ -21,8 +21,8 @@ pub use multi::{
     MpscEventHandler, MpscProducer, MpscProducerBuilder, MpscRingBuffer, SpmcRingBuffer,
 };
 pub use single::{
-    BroadcastRingBuffer, Consumer, ConsumerBuilder, EventHandler, CachedProducer, MessageRingBuffer,
-    Producer, ProducerBuilder, RingBuffer,
+    BroadcastRingBuffer, CachedProducer, Consumer, ConsumerBuilder, EventHandler,
+    MessageRingBuffer, Producer, ProducerBuilder, RingBuffer,
 };
 pub use slots::{MessageSlot, Slot16, Slot32, Slot64, Slot8};
 

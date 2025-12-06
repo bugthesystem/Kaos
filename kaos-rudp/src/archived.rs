@@ -30,10 +30,14 @@ unsafe impl Send for SpscBuffer {}
 
 impl SpscBuffer {
     fn new(buffer: MessageRingBuffer) -> Self {
-        Self { buffer: UnsafeCell::new(buffer) }
+        Self {
+            buffer: UnsafeCell::new(buffer),
+        }
     }
 
+    /// SAFETY: Only called from producer thread (ArchivedTransport.send)
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     unsafe fn producer(&self) -> &mut MessageRingBuffer {
         &mut *self.buffer.get()
     }
@@ -67,11 +71,15 @@ pub enum ArchivedError {
 }
 
 impl From<io::Error> for ArchivedError {
-    fn from(e: io::Error) -> Self { ArchivedError::Io(e) }
+    fn from(e: io::Error) -> Self {
+        ArchivedError::Io(e)
+    }
 }
 
 impl From<ArchiveError> for ArchivedError {
-    fn from(e: ArchiveError) -> Self { ArchivedError::Archive(e) }
+    fn from(e: ArchiveError) -> Self {
+        ArchivedError::Archive(e)
+    }
 }
 
 impl std::fmt::Display for ArchivedError {
@@ -244,7 +252,8 @@ impl ArchivedTransport {
     }
 
     pub fn receive_batch_with<F>(&mut self, max_batch: usize, handler: F)
-    where F: FnMut(&[u8])
+    where
+        F: FnMut(&[u8]),
     {
         self.inner.receive_batch_with(max_batch, handler);
     }
@@ -261,13 +270,16 @@ impl ArchivedTransport {
         packet.extend_from_slice(bytemuck::bytes_of(&header));
         packet.extend_from_slice(data);
 
-        self.inner.socket().send_to(&packet, self.inner.remote_addr())?;
+        self.inner
+            .socket()
+            .send_to(&packet, self.inner.remote_addr())?;
         kaos::record_retransmit();
         Ok(())
     }
 
     pub fn replay<F>(&self, from: u64, to: u64, mut handler: F) -> Result<u64, ArchivedError>
-    where F: FnMut(u64, &[u8])
+    where
+        F: FnMut(u64, &[u8]),
     {
         let archive = self.archive.lock().unwrap();
         let count = archive.replay(from, to, |seq, data| handler(seq, data))?;
@@ -293,7 +305,8 @@ impl ArchivedTransport {
     }
 
     pub fn pending(&self) -> u64 {
-        self.msg_count.load(Ordering::Acquire)
+        self.msg_count
+            .load(Ordering::Acquire)
             .saturating_sub(self.archived_seq.load(Ordering::Acquire))
     }
 
@@ -331,7 +344,8 @@ mod tests {
             1024,
             &archive_path,
             1024 * 1024,
-        ).unwrap();
+        )
+        .unwrap();
 
         for i in 0..20 {
             let _ = transport.send(format!("tap-msg-{}", i).as_bytes());
@@ -355,7 +369,8 @@ mod tests {
             8192,
             &archive_path,
             64 * 1024 * 1024,
-        ).unwrap();
+        )
+        .unwrap();
 
         let msg = vec![0u8; 64];
         let count = 10_000;
@@ -371,10 +386,16 @@ mod tests {
 
         println!(
             "ARCHIVED: {} msgs, send={:?}, total={:?}, rate={:.1}M/s",
-            count, send_time, total_time,
+            count,
+            send_time,
+            total_time,
             count as f64 / total_time.as_secs_f64() / 1_000_000.0
         );
 
-        assert!(send_time.as_millis() < 100, "Send took too long: {:?}", send_time);
+        assert!(
+            send_time.as_millis() < 100,
+            "Send took too long: {:?}",
+            send_time
+        );
     }
 }

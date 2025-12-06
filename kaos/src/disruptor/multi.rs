@@ -5,12 +5,12 @@
 //! - `MpmcRingBuffer<T>` - Multiple producers, multiple consumers
 
 use std::marker::PhantomData;
-use std::sync::atomic::{ AtomicU64, Ordering };
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::disruptor::completion::{ BatchReadGuard, CompletionTracker, ReadGuard, ReadableRing };
+use crate::disruptor::completion::{BatchReadGuard, CompletionTracker, ReadGuard, ReadableRing};
 use crate::disruptor::RingBufferEntry;
-use crate::error::{ KaosError, Result };
+use crate::error::{KaosError, Result};
 
 // ============================================================================
 // MPSC - Multi-Producer Single Consumer
@@ -32,7 +32,9 @@ impl<T: RingBufferEntry> MpscRingBuffer<T> {
             return Err(KaosError::config("Size must be power of 2"));
         }
         if size < 64 {
-            return Err(KaosError::config("MPSC ring buffer must be at least 64 slots"));
+            return Err(KaosError::config(
+                "MPSC ring buffer must be at least 64 slots",
+            ));
         }
 
         let buffer = (0..size)
@@ -69,14 +71,12 @@ impl<T: RingBufferEntry> MpscRingBuffer<T> {
                 return None;
             }
 
-            match
-                self.claim_cursor.compare_exchange_weak(
-                    current,
-                    next,
-                    Ordering::Acquire,
-                    Ordering::Relaxed
-                )
-            {
+            match self.claim_cursor.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => {
                     return Some(current);
                 }
@@ -264,7 +264,8 @@ impl<T: RingBufferEntry> MpscProducer<T> {
     }
 
     pub fn publish<F>(&self, writer: F) -> std::result::Result<(), &'static str>
-        where F: FnOnce(&mut T)
+    where
+        F: FnOnce(&mut T),
     {
         if let Some(seq) = self.ring_buffer.try_claim(1) {
             let mut value = T::default();
@@ -283,9 +284,10 @@ impl<T: RingBufferEntry> MpscProducer<T> {
     pub fn publish_batch<F>(
         &self,
         count: usize,
-        mut writer: F
+        mut writer: F,
     ) -> std::result::Result<usize, &'static str>
-        where F: FnMut(usize, &mut T)
+    where
+        F: FnMut(usize, &mut T),
     {
         if let Some(start_seq) = self.ring_buffer.try_claim(count) {
             // Write all slots first
@@ -325,7 +327,9 @@ impl<T: RingBufferEntry> MpscProducerBuilder<T> {
         self
     }
     pub fn build(self) -> std::result::Result<MpscProducer<T>, &'static str> {
-        self.ring_buffer.map(MpscProducer::new).ok_or("Ring buffer not set")
+        self.ring_buffer
+            .map(MpscProducer::new)
+            .ok_or("Ring buffer not set")
     }
 }
 
@@ -493,11 +497,9 @@ impl<T: RingBufferEntry> SpmcRingBuffer<T> {
 
     pub fn try_read_batch(&self, max_count: usize) -> Option<BatchReadGuard<'_, T, Self>> {
         let producer_seq = self.producer_cursor.load(Ordering::Relaxed);
-        if
-            let Some((start, count)) = self.completion_tracker.try_claim_batch(
-                max_count,
-                producer_seq
-            )
+        if let Some((start, count)) = self
+            .completion_tracker
+            .try_claim_batch(max_count, producer_seq)
         {
             std::sync::atomic::fence(Ordering::Acquire);
             Some(BatchReadGuard::new(self, start, count))
@@ -620,7 +622,9 @@ impl<T: RingBufferEntry> MpmcRingBuffer<T> {
             return Err(KaosError::config("Size must be power of 2"));
         }
         if size < 64 {
-            return Err(KaosError::config("MPMC ring buffer must be at least 64 slots"));
+            return Err(KaosError::config(
+                "MPMC ring buffer must be at least 64 slots",
+            ));
         }
 
         let buffer = (0..size)
@@ -671,14 +675,12 @@ impl<T: RingBufferEntry> MpmcRingBuffer<T> {
                 return None;
             }
 
-            match
-                self.claim_cursor.compare_exchange_weak(
-                    current,
-                    next,
-                    Ordering::Acquire,
-                    Ordering::Relaxed
-                )
-            {
+            match self.claim_cursor.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => {
                     return Some(current);
                 }
@@ -844,14 +846,12 @@ impl<T: RingBufferEntry> MpmcRingBuffer<T> {
         }
 
         // Try to claim this slot
-        match
-            self.consumer_cursor.compare_exchange_weak(
-                consumer,
-                consumer + 1,
-                Ordering::Acquire,
-                Ordering::Relaxed
-            )
-        {
+        match self.consumer_cursor.compare_exchange_weak(
+            consumer,
+            consumer + 1,
+            Ordering::Acquire,
+            Ordering::Relaxed,
+        ) {
             Ok(_) => {
                 let idx = (consumer as usize) & self.mask;
                 Some((consumer, &self.buffer[idx]))
@@ -873,14 +873,12 @@ impl<T: RingBufferEntry> MpmcRingBuffer<T> {
         let count = available.min(max_count);
 
         // Try to claim these slots
-        match
-            self.consumer_cursor.compare_exchange_weak(
-                consumer,
-                consumer + (count as u64),
-                Ordering::Acquire,
-                Ordering::Relaxed
-            )
-        {
+        match self.consumer_cursor.compare_exchange_weak(
+            consumer,
+            consumer + (count as u64),
+            Ordering::Acquire,
+            Ordering::Relaxed,
+        ) {
             Ok(_) => {
                 let start_idx = (consumer as usize) & self.mask;
                 let end_idx = start_idx + count;
@@ -933,7 +931,10 @@ impl<T: RingBufferEntry> CachedMpmcProducer<T> {
 
     /// Publish with closure (zero-copy)
     #[inline]
-    pub fn publish<F>(&mut self, update: F) -> bool where F: FnOnce(&mut T) {
+    pub fn publish<F>(&mut self, update: F) -> bool
+    where
+        F: FnOnce(&mut T),
+    {
         if let Some(seq) = self.try_claim_cached(1) {
             let idx = (seq as usize) & self.ring.mask;
             // SAFETY: We have exclusive claim to this slot via try_claim_cached
@@ -949,7 +950,8 @@ impl<T: RingBufferEntry> CachedMpmcProducer<T> {
     /// Batch publish with closure (zero-copy)
     #[inline]
     pub fn publish_batch<F>(&mut self, count: usize, mut update: F) -> Option<usize>
-        where F: FnMut(usize, &mut T)
+    where
+        F: FnMut(usize, &mut T),
     {
         let seq = self.try_claim_cached(count)?;
 
@@ -973,14 +975,12 @@ impl<T: RingBufferEntry> CachedMpmcProducer<T> {
 
             // Fast path: check cached clear position
             if next <= self.sequence_clear_of_consumers {
-                match
-                    self.ring.claim_cursor.compare_exchange_weak(
-                        current,
-                        next,
-                        Ordering::Acquire,
-                        Ordering::Relaxed
-                    )
-                {
+                match self.ring.claim_cursor.compare_exchange_weak(
+                    current,
+                    next,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
                     Ok(_) => {
                         return Some(current);
                     }
@@ -1001,14 +1001,12 @@ impl<T: RingBufferEntry> CachedMpmcProducer<T> {
 
             self.sequence_clear_of_consumers = consumer + (self.ring.size as u64) - 1;
 
-            match
-                self.ring.claim_cursor.compare_exchange_weak(
-                    current,
-                    next,
-                    Ordering::Acquire,
-                    Ordering::Relaxed
-                )
-            {
+            match self.ring.claim_cursor.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => {
                     return Some(current);
                 }
@@ -1038,7 +1036,10 @@ impl<T: RingBufferEntry> CachedMpscProducer<T> {
 
     /// Publish with closure (zero-copy)
     #[inline]
-    pub fn publish<F>(&mut self, update: F) -> bool where F: FnOnce(&mut T) {
+    pub fn publish<F>(&mut self, update: F) -> bool
+    where
+        F: FnOnce(&mut T),
+    {
         if let Some(seq) = self.try_claim_cached(1) {
             let idx = (seq as usize) & self.ring.mask;
             // SAFETY: We have exclusive claim to this slot
@@ -1054,7 +1055,8 @@ impl<T: RingBufferEntry> CachedMpscProducer<T> {
     /// Batch publish with closure (zero-copy)
     #[inline]
     pub fn publish_batch<F>(&mut self, count: usize, mut update: F) -> Option<usize>
-        where F: FnMut(usize, &mut T)
+    where
+        F: FnMut(usize, &mut T),
     {
         let seq = self.try_claim_cached(count)?;
 
@@ -1076,14 +1078,12 @@ impl<T: RingBufferEntry> CachedMpscProducer<T> {
             let next = current + (count as u64);
 
             if next <= self.sequence_clear_of_consumers {
-                match
-                    self.ring.claim_cursor.compare_exchange_weak(
-                        current,
-                        next,
-                        Ordering::Acquire,
-                        Ordering::Relaxed
-                    )
-                {
+                match self.ring.claim_cursor.compare_exchange_weak(
+                    current,
+                    next,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
                     Ok(_) => {
                         return Some(current);
                     }
@@ -1095,9 +1095,8 @@ impl<T: RingBufferEntry> CachedMpscProducer<T> {
             }
 
             let consumer = self.ring.consumer_cursor.load(Ordering::Acquire);
-            let free = (self.ring.buffer.len() as u64).saturating_sub(
-                current.wrapping_sub(consumer)
-            );
+            let free =
+                (self.ring.buffer.len() as u64).saturating_sub(current.wrapping_sub(consumer));
 
             if free < (count as u64) {
                 return None;
@@ -1105,14 +1104,12 @@ impl<T: RingBufferEntry> CachedMpscProducer<T> {
 
             self.sequence_clear_of_consumers = consumer + (self.ring.buffer.len() as u64) - 1;
 
-            match
-                self.ring.claim_cursor.compare_exchange_weak(
-                    current,
-                    next,
-                    Ordering::Acquire,
-                    Ordering::Relaxed
-                )
-            {
+            match self.ring.claim_cursor.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => {
                     return Some(current);
                 }
@@ -1267,25 +1264,23 @@ mod tests {
         let mut consumers = vec![];
         for _ in 0..num_consumers {
             let ring_consumer = ring.clone();
-            consumers.push(
-                thread::spawn(move || {
-                    let mut sum = 0u64;
-                    let mut count = 0u64;
-                    loop {
-                        if let Some(guard) = ring_consumer.try_read() {
-                            let value = guard.get().value;
-                            if value == 0 {
-                                break;
-                            }
-                            sum += value;
-                            count += 1;
-                        } else {
-                            std::hint::spin_loop();
+            consumers.push(thread::spawn(move || {
+                let mut sum = 0u64;
+                let mut count = 0u64;
+                loop {
+                    if let Some(guard) = ring_consumer.try_read() {
+                        let value = guard.get().value;
+                        if value == 0 {
+                            break;
                         }
+                        sum += value;
+                        count += 1;
+                    } else {
+                        std::hint::spin_loop();
                     }
-                    (sum, count)
-                })
-            );
+                }
+                (sum, count)
+            }));
         }
 
         producer.join().unwrap();

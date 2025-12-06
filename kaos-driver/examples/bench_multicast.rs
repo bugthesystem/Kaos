@@ -2,12 +2,12 @@
 //!
 //! cargo run -p kaos-driver --release --example bench_multicast
 
-use kaos_ipc::{ Publisher, Subscriber };
-use std::net::{ Ipv4Addr, SocketAddr, UdpSocket };
-use std::sync::atomic::{ AtomicBool, AtomicU64, Ordering };
+use kaos_ipc::{Publisher, Subscriber};
+use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{ Duration, Instant };
+use std::time::{Duration, Instant};
 
 const GROUP: Ipv4Addr = Ipv4Addr::new(239, 255, 0, 1);
 const PORT: u16 = 40457;
@@ -80,7 +80,10 @@ fn main() {
         if let Some(start) = start {
             let elapsed = start.elapsed().as_secs_f64();
             let throughput = (local_recv as f64) / elapsed / 1e6;
-            println!("\nRECV: {} in {:.2}s = {:.2} M/s", local_recv, elapsed, throughput);
+            println!(
+                "\nRECV: {} in {:.2}s = {:.2} M/s",
+                local_recv, elapsed, throughput
+            );
         } else {
             println!("\nRECV: {} (no messages received)", local_recv);
         }
@@ -128,7 +131,7 @@ fn run_driver(
     running: &Arc<AtomicBool>,
     sent_count: &Arc<AtomicU64>,
     recv_count: &Arc<AtomicU64>,
-    to_app: &mut Publisher
+    to_app: &mut Publisher,
 ) {
     let mut from_app = loop {
         match Subscriber::open("/tmp/mcast-tx") {
@@ -191,9 +194,8 @@ fn run_driver(
                 Ok((len, _)) if len >= 8 => {
                     let msg_count = len / 8;
                     for i in 0..msg_count {
-                        let v = u64::from_le_bytes(
-                            recv_buf[i * 8..(i + 1) * 8].try_into().unwrap()
-                        );
+                        let v =
+                            u64::from_le_bytes(recv_buf[i * 8..(i + 1) * 8].try_into().unwrap());
                         let _ = to_app.send(v);
                         driver_recv += 1;
                         recv_count.store(driver_recv, Ordering::Relaxed);
@@ -219,7 +221,7 @@ fn create_multicast_socket() -> std::io::Result<UdpSocket> {
     let socket2 = socket2::Socket::new(
         socket2::Domain::IPV4,
         socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP)
+        Some(socket2::Protocol::UDP),
     )?;
     socket2.set_reuse_address(true)?;
     socket2.set_send_buffer_size(8 * 1024 * 1024)?;

@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Log file header (64 bytes, cache-line aligned)
 #[repr(C, align(64))]
 struct LogHeader {
-    magic: u64,           // "KAOSLOG\0"
+    magic: u64, // "KAOSLOG\0"
     version: u32,
     _reserved: u32,
     write_pos: AtomicU64, // Current write position
@@ -104,7 +104,9 @@ impl Archive {
         let header = unsafe { &mut *(log_mmap.as_mut_ptr() as *mut LogHeader) };
         header.magic = MAGIC;
         header.version = 1;
-        header.write_pos.store(HEADER_SIZE as u64, Ordering::Release);
+        header
+            .write_pos
+            .store(HEADER_SIZE as u64, Ordering::Release);
         header.msg_count.store(0, Ordering::Release);
 
         Ok(Self {
@@ -123,7 +125,10 @@ impl Archive {
         let index_path = base.with_extension("idx");
 
         let log_file = OpenOptions::new().read(true).write(true).open(&log_path)?;
-        let index_file = OpenOptions::new().read(true).write(true).open(&index_path)?;
+        let index_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&index_path)?;
 
         let capacity = log_file.metadata()?.len() as usize;
         let log_mmap = unsafe { MmapOptions::new().map_mut(&log_file)? };
@@ -192,7 +197,9 @@ impl Archive {
         // Update header atomically
         let header_ptr = self.log_mmap.as_mut_ptr() as *mut LogHeader;
         unsafe {
-            (*header_ptr).write_pos.store(new_pos as u64, Ordering::Release);
+            (*header_ptr)
+                .write_pos
+                .store(new_pos as u64, Ordering::Release);
             (*header_ptr).msg_count.store(seq + 1, Ordering::Release);
         }
 
@@ -217,7 +224,12 @@ impl Archive {
         // Read checksum from frame header (may be unaligned, so read directly from bytes)
         let checksum_offset = offset + 4; // checksum is at offset 4 in FrameHeader (after length u32)
         let checksum_bytes = &self.log_mmap[checksum_offset..checksum_offset + 4];
-        let checksum = u32::from_ne_bytes([checksum_bytes[0], checksum_bytes[1], checksum_bytes[2], checksum_bytes[3]]);
+        let checksum = u32::from_ne_bytes([
+            checksum_bytes[0],
+            checksum_bytes[1],
+            checksum_bytes[2],
+            checksum_bytes[3],
+        ]);
         let data = &self.log_mmap[offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + length];
 
         // Verify checksum
@@ -353,4 +365,3 @@ mod tests {
         assert_eq!(replayed[9].0, 19);
     }
 }
-

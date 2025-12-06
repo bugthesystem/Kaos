@@ -20,6 +20,12 @@ pub struct DataVerifier {
     last_verified: AtomicU64,
 }
 
+impl Default for DataVerifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataVerifier {
     pub fn new() -> Self {
         Self {
@@ -145,6 +151,12 @@ pub struct SequenceChecker {
     out_of_order: AtomicU64,
     /// Highest sequence seen
     highest_seen: AtomicU64,
+}
+
+impl Default for SequenceChecker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SequenceChecker {

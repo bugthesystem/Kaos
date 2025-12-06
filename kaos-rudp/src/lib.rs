@@ -68,13 +68,13 @@ mod sendmmsg;
 mod window;
 
 #[cfg(feature = "archive")]
-pub use archived::{ArchivedTransport, ArchivedError};
+pub use archived::{ArchivedError, ArchivedTransport};
 use congestion::CongestionController;
 pub use congestion::CongestionController as Congestion;
 #[cfg(feature = "driver")]
 pub use driver::DriverTransport;
-pub use multicast::{MulticastSocket, MulticastTransport};
 use kaos::{record_backpressure, record_receive, record_retransmit, record_send};
+pub use multicast::{MulticastSocket, MulticastTransport};
 use window::BitmapWindow;
 
 /// Message types for reliable UDP protocol
@@ -458,7 +458,7 @@ impl ReliableUdpRingBufferTransport {
     pub fn receive(&mut self) -> Option<Box<[u8; 2048]>> {
         let mut buf = [0u8; 2048];
         match self.socket.recv_from(&mut buf) {
-            Ok((len, src)) => {
+            Ok((len, _src)) => {
                 let data = &buf[..len];
 
                 if len >= ReliableUdpHeader::SIZE {
@@ -493,9 +493,9 @@ impl ReliableUdpRingBufferTransport {
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // No UDP data available, just fall through
             }
-            Err(e) => {
+            Err(_e) => {
                 #[cfg(feature = "debug")]
-                eprintln!("[WARN] Socket error in receive: {}", e);
+                eprintln!("[WARN] Socket error in receive: {}", _e);
             }
         }
         let mut found = None;
@@ -535,9 +535,9 @@ impl ReliableUdpRingBufferTransport {
             "[NAK-SEND] Sending batch NAK for seq {}-{} to {}",
             start_seq, end_seq, self.remote_nak_addr
         );
-        if let Err(e) = self.nak_socket.send_to(&packet, self.remote_nak_addr) {
+        if let Err(_e) = self.nak_socket.send_to(&packet, self.remote_nak_addr) {
             #[cfg(feature = "debug")]
-            eprintln!("[NAK-SEND-ERROR] Failed to send NAK: {}", e);
+            eprintln!("[NAK-SEND-ERROR] Failed to send NAK: {}", _e);
         } else {
             #[cfg(feature = "debug")]
             eprintln!("[NAK-SEND-OK] Batch NAK sent successfully");
@@ -613,14 +613,14 @@ impl ReliableUdpRingBufferTransport {
 
         loop {
             match self.nak_socket.recv_from(&mut buf) {
-                Ok((len, src)) => {
+                Ok((len, _src)) => {
                     _nak_count += 1;
 
                     if len < ReliableUdpHeader::SIZE {
                         #[cfg(feature = "debug")]
                         eprintln!(
                             "[NAK] Received invalid NAK (too short: {} bytes) from {}",
-                            len, src
+                            len, _src
                         );
                         continue;
                     }
@@ -681,9 +681,9 @@ impl ReliableUdpRingBufferTransport {
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     break;
                 }
-                Err(e) => {
+                Err(_e) => {
                     #[cfg(feature = "debug")]
-                    eprintln!("[NAK] Socket error: {}", e);
+                    eprintln!("[NAK] Socket error: {}", _e);
                     break;
                 }
             }
@@ -734,9 +734,9 @@ impl ReliableUdpRingBufferTransport {
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                             break;
                         }
-                        Err(e) => {
+                        Err(_e) => {
                             #[cfg(feature = "debug")]
-                            eprintln!("[ERR] Socket error: {}", e);
+                            eprintln!("[ERR] Socket error: {}", _e);
                             break;
                         }
                     }

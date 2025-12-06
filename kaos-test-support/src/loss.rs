@@ -113,7 +113,7 @@ impl LossGenerator {
             LossPattern::None => DropDecision::Pass,
 
             LossPattern::Periodic { every_n } => {
-                if *every_n > 0 && self.packet_count % every_n == 0 {
+                if *every_n > 0 && self.packet_count.is_multiple_of(*every_n) {
                     DropDecision::Drop
                 } else {
                     DropDecision::Pass

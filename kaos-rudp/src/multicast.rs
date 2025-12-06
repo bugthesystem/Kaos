@@ -89,9 +89,8 @@ impl MulticastTransport {
             .with_consumers(1)
             .map_err(|e| io::Error::other(format!("ring config: {}", e)))?;
 
-        let send_ring = MessageRingBuffer::new(config).map_err(|e|
-            io::Error::other(format!("ring buffer: {}", e))
-        )?;
+        let send_ring = MessageRingBuffer::new(config)
+            .map_err(|e| io::Error::other(format!("ring buffer: {}", e)))?;
 
         Ok(Self {
             socket,
@@ -166,7 +165,10 @@ impl MulticastTransport {
     }
 
     /// Receive batch of messages.
-    pub fn receive_batch<F>(&self, max: usize, mut handler: F) -> usize where F: FnMut(&[u8]) {
+    pub fn receive_batch<F>(&self, max: usize, mut handler: F) -> usize
+    where
+        F: FnMut(&[u8]),
+    {
         let mut buf = [0u8; RECV_PACKET_SIZE];
         let mut count = 0;
 
@@ -216,7 +218,9 @@ impl MulticastTransport {
 
 impl Drop for MulticastTransport {
     fn drop(&mut self) {
-        let _ = self.socket.leave_multicast_v4(&self.group, &Ipv4Addr::UNSPECIFIED);
+        let _ = self
+            .socket
+            .leave_multicast_v4(&self.group, &Ipv4Addr::UNSPECIFIED);
     }
 }
 
@@ -247,7 +251,8 @@ impl MulticastSocket {
 
     /// Send to all group members.
     pub fn send(&self, data: &[u8], port: u16) -> io::Result<usize> {
-        self.socket.send_to(data, SocketAddr::new(self.group.into(), port))
+        self.socket
+            .send_to(data, SocketAddr::new(self.group.into(), port))
     }
 
     /// Send to group on same port.
@@ -288,7 +293,9 @@ impl MulticastSocket {
 
 impl Drop for MulticastSocket {
     fn drop(&mut self) {
-        let _ = self.socket.leave_multicast_v4(&self.group, &Ipv4Addr::UNSPECIFIED);
+        let _ = self
+            .socket
+            .leave_multicast_v4(&self.group, &Ipv4Addr::UNSPECIFIED);
     }
 }
 

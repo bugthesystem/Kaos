@@ -2,18 +2,13 @@
 //!
 //! Run: cargo bench --bench bench_patterns
 
-use criterion::{ criterion_group, criterion_main, BenchmarkId, Criterion, Throughput };
-use std::sync::atomic::{ AtomicU64, Ordering };
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 
 use kaos::disruptor::{
-    CachedMpmcProducer,
-    CachedMpscProducer,
-    MpmcRingBuffer,
-    MpscRingBuffer,
-    Slot8,
-    SpmcRingBuffer,
+    CachedMpmcProducer, CachedMpscProducer, MpmcRingBuffer, MpscRingBuffer, Slot8, SpmcRingBuffer,
 };
 
 const RING_SIZE: usize = 64 * 1024; // 64K slots
@@ -182,12 +177,11 @@ fn bench_mpmc_fast(events: u64) -> u64 {
     let mut sent = 0u64;
     while sent < events {
         let batch = ((events - sent) as usize).min(BATCH_SIZE);
-        if
-            producer
-                .publish_batch(batch, |i, slot| {
-                    slot.value = i as u64;
-                })
-                .is_some()
+        if producer
+            .publish_batch(batch, |i, slot| {
+                slot.value = i as u64;
+            })
+            .is_some()
         {
             sent += batch as u64;
         } else {
@@ -226,12 +220,11 @@ fn bench_mpsc_fast(events: u64) -> u64 {
     let mut sent = 0u64;
     while sent < events {
         let batch = ((events - sent) as usize).min(BATCH_SIZE);
-        if
-            producer
-                .publish_batch(batch, |i, slot| {
-                    slot.value = i as u64;
-                })
-                .is_some()
+        if producer
+            .publish_batch(batch, |i, slot| {
+                slot.value = i as u64;
+            })
+            .is_some()
         {
             sent += batch as u64;
         } else {

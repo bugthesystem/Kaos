@@ -34,7 +34,7 @@ fn main() {
 
 fn create_multicast_socket(port: u16, is_sender: bool) -> std::io::Result<UdpSocket> {
     use std::net::SocketAddrV4;
-    
+
     let socket2 = socket2::Socket::new(
         socket2::Domain::IPV4,
         socket2::Type::DGRAM,
@@ -43,17 +43,17 @@ fn create_multicast_socket(port: u16, is_sender: bool) -> std::io::Result<UdpSoc
     socket2.set_reuse_address(true)?;
     socket2.set_send_buffer_size(8 * 1024 * 1024)?;
     socket2.set_recv_buffer_size(8 * 1024 * 1024)?;
-    
+
     let bind_port = if is_sender { 0 } else { port };
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, bind_port);
     socket2.bind(&addr.into())?;
-    
+
     let socket: UdpSocket = socket2.into();
     socket.join_multicast_v4(&GROUP, &Ipv4Addr::UNSPECIFIED)?;
     socket.set_multicast_loop_v4(true)?;
     socket.set_multicast_ttl_v4(1)?;
     socket.set_nonblocking(true)?;
-    
+
     Ok(socket)
 }
 
@@ -61,23 +61,28 @@ fn create_multicast_socket(port: u16, is_sender: bool) -> std::io::Result<UdpSoc
 fn send() {
     use std::mem::MaybeUninit;
     use std::os::unix::io::AsRawFd;
-    
+
     println!("KAOS MULTICAST SEND → {}:{} (sendmmsg)", GROUP, PORT);
-    println!("Messages: {}, Size: {}B, Batch: {}", N, MSG_SIZE, BATCH_SIZE);
-    
+    println!(
+        "Messages: {}, Size: {}B, Batch: {}",
+        N, MSG_SIZE, BATCH_SIZE
+    );
+
     let socket = create_multicast_socket(PORT, true).unwrap();
     let fd = socket.as_raw_fd();
     let dest = SocketAddr::new(GROUP.into(), PORT);
     let dest_addr = socket2::SockAddr::from(dest);
-    
+
     println!("Starting in 500ms...");
     std::thread::sleep(std::time::Duration::from_millis(500));
-    
+
     // Pre-allocate buffers
     let mut send_bufs = vec![[b'X'; MSG_SIZE]; BATCH_SIZE];
-    let mut send_iovecs: Vec<libc::iovec> = vec![unsafe { MaybeUninit::zeroed().assume_init() }; BATCH_SIZE];
-    let mut send_msgs: Vec<libc::mmsghdr> = vec![unsafe { MaybeUninit::zeroed().assume_init() }; BATCH_SIZE];
-    
+    let mut send_iovecs: Vec<libc::iovec> =
+        vec![unsafe { MaybeUninit::zeroed().assume_init() }; BATCH_SIZE];
+    let mut send_msgs: Vec<libc::mmsghdr> =
+        vec![unsafe { MaybeUninit::zeroed().assume_init() }; BATCH_SIZE];
+
     // Setup iovecs and msgs
     for i in 0..BATCH_SIZE {
         send_iovecs[i].iov_base = send_bufs[i].as_mut_ptr() as *mut _;
@@ -87,10 +92,10 @@ fn send() {
         send_msgs[i].msg_hdr.msg_name = dest_addr.as_ptr() as *mut _;
         send_msgs[i].msg_hdr.msg_namelen = dest_addr.len();
     }
-    
+
     let start = Instant::now();
     let mut sent: u64 = 0;
-    
+
     while sent < N {
         let batch = ((N - sent) as usize).min(BATCH_SIZE);
         let n = unsafe { libc::sendmmsg(fd, send_msgs.as_mut_ptr(), batch as u32, 0) };
@@ -108,43 +113,51 @@ fn send() {
             std::thread::yield_now();
         }
     }
-    
+
     let elapsed = start.elapsed().as_secs_f64();
     let throughput = sent as f64 / elapsed / 1e6;
-    println!("\nRESULT: {} messages in {:.2}s = {:.2} M/s", sent, elapsed, throughput);
+    println!(
+        "\nRESULT: {} messages in {:.2}s = {:.2} M/s",
+        sent, elapsed, throughput
+    );
 }
 
 #[cfg(target_os = "linux")]
 fn recv() {
     use std::mem::MaybeUninit;
     use std::os::unix::io::AsRawFd;
-    
+
     println!("KAOS MULTICAST RECV ({}:{}) (recvmmsg)", GROUP, PORT);
-    println!("Messages: {}, Size: {}B, Batch: {}", N, MSG_SIZE, BATCH_SIZE);
-    
+    println!(
+        "Messages: {}, Size: {}B, Batch: {}",
+        N, MSG_SIZE, BATCH_SIZE
+    );
+
     let socket = create_multicast_socket(PORT, false).unwrap();
     let fd = socket.as_raw_fd();
-    
+
     println!("Waiting for messages...");
-    
+
     // Pre-allocate buffers
     let mut recv_bufs = vec![[0u8; MSG_SIZE + 64]; BATCH_SIZE];
-    let mut recv_iovecs: Vec<libc::iovec> = vec![unsafe { MaybeUninit::zeroed().assume_init() }; BATCH_SIZE];
-    let mut recv_msgs: Vec<libc::mmsghdr> = vec![unsafe { MaybeUninit::zeroed().assume_init() }; BATCH_SIZE];
-    
+    let mut recv_iovecs: Vec<libc::iovec> =
+        vec![unsafe { MaybeUninit::zeroed().assume_init() }; BATCH_SIZE];
+    let mut recv_msgs: Vec<libc::mmsghdr> =
+        vec![unsafe { MaybeUninit::zeroed().assume_init() }; BATCH_SIZE];
+
     for i in 0..BATCH_SIZE {
         recv_iovecs[i].iov_base = recv_bufs[i].as_mut_ptr() as *mut _;
         recv_iovecs[i].iov_len = recv_bufs[i].len();
         recv_msgs[i].msg_hdr.msg_iov = &mut recv_iovecs[i];
         recv_msgs[i].msg_hdr.msg_iovlen = 1;
     }
-    
+
     let mut received: u64 = 0;
     let mut start: Option<Instant> = None;
-    
+
     // Set blocking for initial receive
     socket.set_nonblocking(false).unwrap();
-    
+
     while received < N {
         let n = unsafe {
             libc::recvmmsg(
@@ -155,7 +168,7 @@ fn recv() {
                 std::ptr::null_mut(),
             )
         };
-        
+
         if n > 0 {
             if start.is_none() {
                 start = Some(Instant::now());
@@ -170,11 +183,14 @@ fn recv() {
             break;
         }
     }
-    
+
     if let Some(start) = start {
         let elapsed = start.elapsed().as_secs_f64();
         let throughput = received as f64 / elapsed / 1e6;
-        println!("\nRESULT: {} messages in {:.2}s = {:.2} M/s", received, elapsed, throughput);
+        println!(
+            "\nRESULT: {} messages in {:.2}s = {:.2} M/s",
+            received, elapsed, throughput
+        );
     }
 }
 
@@ -184,17 +200,17 @@ fn send() {
     println!("KAOS MULTICAST SEND → {}:{}", GROUP, PORT);
     println!("Messages: {}, Size: {}B", N, MSG_SIZE);
     println!("NOTE: macOS doesn't have sendmmsg, using single sends");
-    
+
     let socket = create_multicast_socket(PORT, true).unwrap();
     let dest = SocketAddr::new(GROUP.into(), PORT);
-    
+
     println!("Starting in 500ms...");
     std::thread::sleep(std::time::Duration::from_millis(500));
-    
+
     let msg = vec![b'X'; MSG_SIZE];
     let start = Instant::now();
     let mut sent: u64 = 0;
-    
+
     while sent < N {
         match socket.send_to(&msg, dest) {
             Ok(_) => {
@@ -203,8 +219,9 @@ fn send() {
                     println!("  sent: {}", sent);
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock 
-                   || e.raw_os_error() == Some(55) => {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock || e.raw_os_error() == Some(55) =>
+            {
                 std::thread::yield_now();
             }
             Err(e) => {
@@ -213,26 +230,29 @@ fn send() {
             }
         }
     }
-    
+
     let elapsed = start.elapsed().as_secs_f64();
     let throughput = sent as f64 / elapsed / 1e6;
-    println!("\nRESULT: {} messages in {:.2}s = {:.2} M/s", sent, elapsed, throughput);
+    println!(
+        "\nRESULT: {} messages in {:.2}s = {:.2} M/s",
+        sent, elapsed, throughput
+    );
 }
 
 #[cfg(not(target_os = "linux"))]
 fn recv() {
     println!("KAOS MULTICAST RECV ({}:{})", GROUP, PORT);
     println!("Messages: {}, Size: {}B", N, MSG_SIZE);
-    
+
     let socket = create_multicast_socket(PORT, false).unwrap();
     socket.set_nonblocking(false).unwrap();
-    
+
     println!("Waiting for messages...");
-    
+
     let mut buf = [0u8; 2048];
     let mut received: u64 = 0;
     let mut start: Option<Instant> = None;
-    
+
     while received < N {
         match socket.recv_from(&mut buf) {
             Ok((len, _)) if len > 0 => {
@@ -251,10 +271,13 @@ fn recv() {
             }
         }
     }
-    
+
     if let Some(start) = start {
         let elapsed = start.elapsed().as_secs_f64();
         let throughput = received as f64 / elapsed / 1e6;
-        println!("\nRESULT: {} messages in {:.2}s = {:.2} M/s", received, elapsed, throughput);
+        println!(
+            "\nRESULT: {} messages in {:.2}s = {:.2} M/s",
+            received, elapsed, throughput
+        );
     }
 }

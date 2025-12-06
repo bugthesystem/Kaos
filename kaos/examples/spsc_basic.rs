@@ -34,7 +34,9 @@ fn main() {
 
             // Claim slots and write
             // SAFETY: Single producer thread
-            if let Some((seq, slots)) = unsafe { ring_prod.try_claim_slots_unchecked(batch, cursor) } {
+            if let Some((seq, slots)) =
+                unsafe { ring_prod.try_claim_slots_unchecked(batch, cursor) }
+            {
                 for (i, slot) in slots.iter_mut().enumerate() {
                     slot.set_sequence(sent + i as u64 + 1);
                 }

@@ -149,4 +149,3 @@ fn benchmark_64b(c: &mut Criterion) {
 
 criterion_group!(benches, benchmark_8b, benchmark_64b);
 criterion_main!(benches);
-

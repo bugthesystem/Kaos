@@ -50,6 +50,12 @@ pub struct ChaosMonkey {
     events_triggered: usize,
 }
 
+impl Default for ChaosMonkey {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChaosMonkey {
     pub fn new() -> Self {
         Self {

@@ -161,7 +161,11 @@ impl<T: RingBufferEntry> RingBuffer<T> {
     /// - The returned slice must not outlive the ring buffer.
     #[inline]
     #[allow(clippy::mut_from_ref)] // Intentional: single-producer guarantee documented in Safety
-    pub unsafe fn try_claim_slots_unchecked(&self, count: usize, local_cursor: u64) -> Option<(u64, &mut [T])> {
+    pub unsafe fn try_claim_slots_unchecked(
+        &self,
+        count: usize,
+        local_cursor: u64,
+    ) -> Option<(u64, &mut [T])> {
         if count == 0 {
             return None;
         }
@@ -608,7 +612,10 @@ impl<T: RingBufferEntry> BroadcastRingBuffer<T> {
     /// - The caller must ensure no concurrent writes to the same slots.
     #[inline]
     #[allow(clippy::mut_from_ref)] // Intentional: single-producer guarantee documented in Safety
-    pub unsafe fn try_claim_slots_relaxed_unchecked(&self, count: usize) -> Option<(u64, &mut [T])> {
+    pub unsafe fn try_claim_slots_relaxed_unchecked(
+        &self,
+        count: usize,
+    ) -> Option<(u64, &mut [T])> {
         let current = self.producer_sequence.load(Ordering::Relaxed);
         let next = current.wrapping_add(count as u64);
 

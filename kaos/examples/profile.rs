@@ -97,7 +97,9 @@ fn run() {
         while seq < warmup {
             let cursor = consumer_seq.load(Ordering::Acquire);
             // SAFETY: Single producer thread
-            if let Some((claimed_seq, slots)) = unsafe { ring.try_claim_slots_unchecked(64, cursor) } {
+            if let Some((claimed_seq, slots)) =
+                unsafe { ring.try_claim_slots_unchecked(64, cursor) }
+            {
                 for (i, slot) in slots.iter_mut().enumerate() {
                     slot.set_sequence(seq + i as u64);
                 }
@@ -111,7 +113,9 @@ fn run() {
             let _span = trace_span!("batch_publish").entered();
             let cursor = consumer_seq.load(Ordering::Acquire);
             // SAFETY: Single producer thread
-            if let Some((claimed_seq, slots)) = unsafe { ring.try_claim_slots_unchecked(64, cursor) } {
+            if let Some((claimed_seq, slots)) =
+                unsafe { ring.try_claim_slots_unchecked(64, cursor) }
+            {
                 for (i, slot) in slots.iter_mut().enumerate() {
                     slot.set_sequence(seq + i as u64);
                 }
@@ -165,7 +169,8 @@ fn run() {
         while seq < warmup {
             let cursor = consumer_seq.load(Ordering::Acquire);
             // SAFETY: Single producer thread
-            if let Some((claimed_seq, slots)) = unsafe { ring.try_claim_slots_unchecked(1, cursor) } {
+            if let Some((claimed_seq, slots)) = unsafe { ring.try_claim_slots_unchecked(1, cursor) }
+            {
                 slots[0].set_sequence(seq);
                 ring.publish(claimed_seq + 1);
                 seq += 1;
@@ -177,7 +182,8 @@ fn run() {
             let _span = trace_span!("single_publish").entered();
             let cursor = consumer_seq.load(Ordering::Acquire);
             // SAFETY: Single producer thread
-            if let Some((claimed_seq, slots)) = unsafe { ring.try_claim_slots_unchecked(1, cursor) } {
+            if let Some((claimed_seq, slots)) = unsafe { ring.try_claim_slots_unchecked(1, cursor) }
+            {
                 slots[0].set_sequence(seq);
                 ring.publish(claimed_seq + 1);
                 seq += 1;
@@ -234,7 +240,9 @@ fn run() {
             let _span = trace_span!("contention_pub").entered();
             let cursor = consumer_seq.load(Ordering::Acquire);
             // SAFETY: Single producer thread
-            if let Some((claimed_seq, slots)) = unsafe { ring.try_claim_slots_unchecked(64, cursor) } {
+            if let Some((claimed_seq, slots)) =
+                unsafe { ring.try_claim_slots_unchecked(64, cursor) }
+            {
                 for (i, slot) in slots.iter_mut().enumerate() {
                     slot.set_sequence(seq + i as u64);
                 }
@@ -294,7 +302,9 @@ fn run() {
             let _span = trace_span!("bp_publish").entered();
             let cursor = consumer_seq.load(Ordering::Acquire);
             // SAFETY: Single producer thread
-            if let Some((claimed_seq, slots)) = unsafe { ring.try_claim_slots_unchecked(32, cursor) } {
+            if let Some((claimed_seq, slots)) =
+                unsafe { ring.try_claim_slots_unchecked(32, cursor) }
+            {
                 for (i, slot) in slots.iter_mut().enumerate() {
                     slot.set_sequence(seq + i as u64);
                 }

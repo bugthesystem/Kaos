@@ -16,7 +16,7 @@ fn main() {
         "send" => {
             let socket = MulticastSocket::join(("0.0.0.0", PORT), GROUP).unwrap();
             socket.set_loopback(true).unwrap(); // For local testing
-            
+
             for i in 0..10 {
                 let msg = format!("message {}", i);
                 socket.broadcast(msg.as_bytes()).unwrap();
@@ -27,7 +27,7 @@ fn main() {
         "recv" => {
             let socket = MulticastSocket::join(("0.0.0.0", PORT), GROUP).unwrap();
             socket.set_loopback(true).unwrap();
-            
+
             println!("listening on {}:{}", GROUP, PORT);
             let mut buf = [0u8; 1024];
             loop {
@@ -43,4 +43,3 @@ fn main() {
         _ => eprintln!("usage: multicast [send|recv]"),
     }
 }
-
