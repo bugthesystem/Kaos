@@ -30,6 +30,7 @@ Kaos provides lock-free ring buffers for inter-thread, inter-process, and networ
 | **[kaos](./kaos)** | Lock-free ring buffers (SPSC, MPSC, SPMC, MPMC) |
 | **[kaos-ipc](./kaos-ipc)** | Shared memory IPC via mmap |
 | **[kaos-rudp](./kaos-rudp)** | Reliable UDP with NAK/ACK |
+| **[kaos-archive](./kaos-archive)** | Persistent message archive for retransmission |
 | **[kaos-driver](./kaos-driver)** | Media driver for zero-syscall I/O |
 
 ## Features
@@ -43,6 +44,9 @@ Kaos provides lock-free ring buffers for inter-thread, inter-process, and networ
 | | Zero-copy reads | ✅ |
 | **Network** | Reliable UDP | ✅ |
 | | Congestion control (AIMD) | ✅ |
+| **Archive** | Persistent message storage | ✅ |
+| | Retransmission from disk | ✅ |
+| | Late joiner replay | ✅ |
 | **Linux** | sendmmsg/recvmmsg | ✅ |
 | | io_uring | ✅ |
 | | AF_XDP kernel bypass | ✅ |
@@ -105,6 +109,14 @@ Reference: Apple M4, macOS 15, SPSC. Run on your hardware.
 | Batch | **2.1 G/s** | — |
 | Per-event | **416 M/s** | 140 M/s |
 
+### Archive vs Aeron Archive
+
+| Size | Kaos | Aeron | Speedup |
+|------|------|-------|---------|
+| 64B | **126 M/s** | 8-15 M/s | 8-15x |
+| 256B | **12.6 M/s** | 5-8 M/s | 1.5-2x |
+| 1024B | **20 M/s** | 3-5 M/s | 4-7x |
+
 ### Summary
 
 | Component | Throughput | Bandwidth |
@@ -114,6 +126,8 @@ Reference: Apple M4, macOS 15, SPSC. Run on your hardware.
 | IPC (8B optimal) | 285 M/s | 2.3 GB/s |
 | IPC (64B max BW) | 151 M/s | 9.6 GB/s |
 | Reliable UDP | 12.5 M/s | — |
+| Archive IPC (64B) | 126 M/s | 8.1 GB/s |
+| Archive append | 45 M/s | 2.9 GB/s |
 
 ```bash
 # Run benchmarks
@@ -177,6 +191,41 @@ producer.publish(|slot| {
 });
 ```
 
+## Archived RUDP (Aeron-style)
+
+Combine reliable UDP with persistent archive for:
+- **Retransmission from disk** — When ring buffer wraps, retransmit from archive
+- **Late joiner replay** — New subscribers catch up from any sequence
+- **Crash recovery** — Resume from persisted state
+
+```rust
+use kaos_rudp::ArchivedTransport;
+
+let mut transport = ArchivedTransport::new(
+    "127.0.0.1:9000".parse().unwrap(),
+    "127.0.0.1:9001".parse().unwrap(),
+    65536,                    // Ring buffer window
+    "/tmp/rudp-archive",      // Archive path
+    1024 * 1024 * 1024,       // 1GB archive
+).unwrap();
+
+// Send — automatically archived for durability
+transport.send(b"hello").unwrap();
+
+// Retransmit from archive (even after ring buffer wrapped)
+transport.retransmit_from_archive(sequence_number);
+
+// Replay range for late joiner
+transport.replay(0, 1000, |seq, msg| {
+    println!("Replaying seq {}: {} bytes", seq, msg.len());
+});
+```
+
+Enable with feature flag:
+```toml
+kaos-rudp = { version = "0.1", features = ["archive"] }
+```
+
 ## Architecture
 
 ```
@@ -190,9 +239,13 @@ producer.publish(|slot| {
 │       sendmmsg  │  io_uring  │  AF_XDP  │  Reliable UDP     │
 └─────────────────────────────┬───────────────────────────────┘
                               │
-┌─────────────────────────────▼───────────────────────────────┐
-│                         NETWORK                             │
-└─────────────────────────────────────────────────────────────┘
+           ┌──────────────────┴──────────────────┐
+           │                                     │
+           ▼                                     ▼
+┌─────────────────────┐              ┌─────────────────────────┐
+│      NETWORK        │              │       ARCHIVE           │
+│                     │◄────NAK──────│  (retransmit/replay)    │
+└─────────────────────┘              └─────────────────────────┘
 ```
 
 ## Testing

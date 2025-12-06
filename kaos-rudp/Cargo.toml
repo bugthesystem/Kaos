@@ -14,22 +14,30 @@ repository = "https://github.com/bugthesystem/kaos"
 default = []
 debug = []
 driver = ["kaos-ipc"]
+archive = ["kaos-archive"]
 tracing = ["kaos/tracing"]
 tracy = ["kaos/tracy"]
 
 [dependencies]
 kaos = { path = "../kaos" }
 kaos-ipc = { path = "../kaos-ipc", optional = true }
+kaos-archive = { path = "../kaos-archive", optional = true }
 bytemuck = { version = "1.14", features = ["derive"] }
 libc = "0.2"
 socket2 = "0.6.1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
 
 [[bench]]
 name = "bench_rudp"
 harness = false
+
+[[bench]]
+name = "bench_archived"
+harness = false
+required-features = ["archive"]
 
 [[example]]
 name = "rudp_bench"

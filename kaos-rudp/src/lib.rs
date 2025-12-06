@@ -58,6 +58,8 @@ thread_local! {
     static RECV_LENS: RefCell<Vec<usize>> = RefCell::new(vec![0usize; RECV_BATCH_SIZE]);
 }
 
+#[cfg(feature = "archive")]
+pub mod archived;
 pub mod congestion;
 #[cfg(feature = "driver")]
 pub mod driver;
@@ -65,6 +67,8 @@ pub mod multicast;
 mod sendmmsg;
 mod window;
 
+#[cfg(feature = "archive")]
+pub use archived::{ArchivedTransport, ArchivedError};
 use congestion::CongestionController;
 pub use congestion::CongestionController as Congestion;
 #[cfg(feature = "driver")]
@@ -843,5 +847,20 @@ impl ReliableUdpRingBufferTransport {
                 });
             });
         });
+    }
+
+    /// Get reference to the underlying socket
+    pub fn socket(&self) -> &UdpSocket {
+        &self.socket
+    }
+
+    /// Get reference to the NAK socket
+    pub fn nak_socket(&self) -> &UdpSocket {
+        &self.nak_socket
+    }
+
+    /// Get remote address
+    pub fn remote_addr(&self) -> SocketAddr {
+        self.remote_addr
     }
 }
