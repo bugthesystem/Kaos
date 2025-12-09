@@ -91,43 +91,29 @@ See [PROFILING.md](./kaos/docs/PROFILING.md) for detailed guide.
 
 ## Performance
 
-Reference: Apple M4, macOS 15, SPSC. Run on your hardware.
+Benchmarked on Apple M1 Pro. Run `cargo bench` on your hardware.
 
-### IPC vs Aeron
+### Ring Buffer
 
-| Size | Kaos | Aeron | Speedup |
-|------|------|-------|---------|
-| 8B | **285 M/s** | 25 M/s | 11x |
-| 16B | **216 M/s** | 15 M/s | 14x |
-| 32B | **184 M/s** | 9 M/s | 20x |
-| 64B | **151 M/s** | 16 M/s | 9x |
+| Benchmark | M1 Pro |
+|-----------|--------|
+| Batch (10M events) | 2.2 G/s |
+| Per-event (1B events) | 416 M/s |
 
-### Ring Buffer vs disruptor-rs
+### IPC (Shared Memory)
 
-| API | Kaos | disruptor-rs |
-|-----|------|--------------|
-| Batch | **2.1 G/s** | — |
-| Per-event | **416 M/s** | 140 M/s |
+| Benchmark | M1 Pro |
+|-----------|--------|
+| Single send (8B) | 145 M/s |
+| Sustained (100K batch) | 600 M/s |
 
-### Archive vs Aeron Archive
+### Archive IPC
 
-| Size | Kaos | Aeron | Speedup |
-|------|------|-------|---------|
-| 64B | **126 M/s** | 8-15 M/s | 8-15x |
-| 256B | **12.6 M/s** | 5-8 M/s | 1.5-2x |
-| 1024B | **20 M/s** | 3-5 M/s | 4-7x |
-
-### Summary
-
-| Component | Throughput | Bandwidth |
-|-----------|------------|-----------|
-| Ring buffer (batch) | 2.1 G/s | — |
-| Ring buffer (per-event) | 416 M/s | — |
-| IPC (8B optimal) | 285 M/s | 2.3 GB/s |
-| IPC (64B max BW) | 151 M/s | 9.6 GB/s |
-| Reliable UDP | 12.5 M/s | — |
-| Archive IPC (64B) | 126 M/s | 8.1 GB/s |
-| Archive append | 45 M/s | 2.9 GB/s |
+| Size | M1 Pro |
+|------|--------|
+| 64B | 13 M/s |
+| 256B | 26 M/s |
+| 1024B | 12 M/s |
 
 ```bash
 # Run benchmarks

@@ -41,11 +41,10 @@ cargo run -p kaos-rudp --release --example multicast_bench -- recv
 cargo run -p kaos-rudp --release --example multicast_bench -- send
 ```
 
-## Results (Apple M3)
+## Results (Apple M1 Pro)
 
-| Benchmark | Kaos | Aeron | Notes |
-|-----------|------|-------|-------|
-| Ring buffer (SPSC 8B) | 2.1 G/s | 1.7 G/s | Batch API |
-| IPC (8B) | 380 M/s | 285 M/s | Shared memory |
-| UDP (8B) | 3.1 M/s | 2.5 M/s | localhost |
-| **Multicast (coalesced)** | **5.2 M/s** | 2.6 M/s | 175 msgs/packet |
+| Benchmark | Throughput | Notes |
+|-----------|------------|-------|
+| Ring buffer (batch) | 2.2 G/s | 10M events |
+| IPC (single) | 145 M/s | 8B messages |
+| IPC (sustained) | 600 M/s | 100K batch |

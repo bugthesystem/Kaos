@@ -165,12 +165,11 @@ cargo install cargo-asm
 cargo asm --lib "kaos::disruptor::single::RingBuffer"
 ```
 
-## Verified Results
+## Verified Results (Apple M1 Pro)
 
 | Component | Throughput | Memory |
 |-----------|------------|--------|
-| SPSC | 3.5 Gelem/s | 0 leaks ✅ |
-| MPSC | 2.5 Gelem/s | 0 leaks ✅ |
-| SPMC | 2.0 Gelem/s | 0 leaks ✅ |
-| MPMC | 1.5 Gelem/s | 0 leaks ✅ |
-| IPC | 450 M/s | 0 leaks ✅ |
+| Ring buffer (batch) | 2.2 G/s | 0 leaks ✅ |
+| Ring buffer (per-event) | 416 M/s | 0 leaks ✅ |
+| IPC (single) | 145 M/s | 0 leaks ✅ |
+| IPC (sustained) | 600 M/s | 0 leaks ✅ |
