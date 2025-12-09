@@ -170,6 +170,6 @@ cargo asm --lib "kaos::disruptor::single::RingBuffer"
 | Component | Throughput | Memory |
 |-----------|------------|--------|
 | Ring buffer (batch) | 2.2 G/s | 0 leaks ✅ |
-| Ring buffer (per-event) | 416 M/s | 0 leaks ✅ |
-| IPC (single) | 145 M/s | 0 leaks ✅ |
-| IPC (sustained) | 600 M/s | 0 leaks ✅ |
+| Ring buffer (per-event) | 425 M/s | 0 leaks ✅ |
+| IPC single | 147 M/s | 0 leaks ✅ |
+| IPC sustained | 595 M/s | 0 leaks ✅ |

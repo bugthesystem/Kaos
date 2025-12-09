@@ -91,29 +91,17 @@ See [PROFILING.md](./kaos/docs/PROFILING.md) for detailed guide.
 
 ## Performance
 
-Benchmarked on Apple M1 Pro. Run `cargo bench` on your hardware.
-
-### Ring Buffer
+Measured on Apple M1 Pro (actual `cargo bench` results).
 
 | Benchmark | M1 Pro |
 |-----------|--------|
-| Batch (10M events) | 2.2 G/s |
-| Per-event (1B events) | 416 M/s |
-
-### IPC (Shared Memory)
-
-| Benchmark | M1 Pro |
-|-----------|--------|
-| Single send (8B) | 145 M/s |
-| Sustained (100K batch) | 600 M/s |
-
-### Archive IPC
-
-| Size | M1 Pro |
-|------|--------|
-| 64B | 13 M/s |
-| 256B | 26 M/s |
-| 1024B | 12 M/s |
+| Ring buffer (batch, 10M) | 2.2 G/s |
+| Ring buffer (per-event, 1B) | 425 M/s |
+| IPC single send (8B) | 147 M/s |
+| IPC sustained (100K) | 595 M/s |
+| Archive IPC (64B) | 12 M/s |
+| Archive IPC (256B) | 28 M/s |
+| Archive read (64B) | 35 ns |
 
 ```bash
 # Run benchmarks

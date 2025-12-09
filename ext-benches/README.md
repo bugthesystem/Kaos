@@ -43,8 +43,10 @@ cargo run -p kaos-rudp --release --example multicast_bench -- send
 
 ## Results (Apple M1 Pro)
 
-| Benchmark | Throughput | Notes |
-|-----------|------------|-------|
-| Ring buffer (batch) | 2.2 G/s | 10M events |
-| IPC (single) | 145 M/s | 8B messages |
-| IPC (sustained) | 600 M/s | 100K batch |
+
+| Benchmark | Throughput |
+|-----------|------------|
+| Ring buffer (batch) | 2.2 G/s |
+| Ring buffer (per-event) | 425 M/s |
+| IPC single | 147 M/s |
+| IPC sustained | 595 M/s |
