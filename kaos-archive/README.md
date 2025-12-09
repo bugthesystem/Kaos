@@ -11,10 +11,14 @@ High-performance message archive using memory-mapped files.
 
 ## Performance (Apple M3)
 
-| Operation | Throughput |
-|-----------|------------|
-| Append | 118 MB/s |
-| Read | ~1 ns (zero-copy) |
+| Operation | Size | Result |
+|-----------|------|--------|
+| Append | 64B | ~15 MiB/s |
+| Append | 1KB | ~200 MiB/s |
+| Append | 4KB | ~600 MiB/s |
+| Read (unchecked) | 64B | ~30 ns |
+
+Read returns direct mmap pointer (zero-copy after index lookup).
 
 ## Usage
 
@@ -62,4 +66,3 @@ messages.idx:
 │ ...              │
 └──────────────────┘
 ```
-
