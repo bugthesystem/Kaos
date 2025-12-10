@@ -17,28 +17,17 @@ The kaos-rudp crate claims to be "reliable UDP" but several critical systems are
 
 | Method | Purpose | Called? | Where? |
 |--------|---------|---------|--------|
-| `can_send()` | Check if window allows send | ✅ YES | `send()` line 339 |
-| `on_send()` | Increment in_flight counter | ✅ YES | `send()` line 394 |
-| `on_ack()` | Grow window (AIMD increase) | ❌ **NO** | **NEVER CALLED** |
-| `on_loss()` | Shrink window (AIMD decrease) | ✅ YES | NAK handler line 592 |
-| `update_rtt()` | Update RTT estimate | ❌ **NO** | **NEVER CALLED** |
+| `can_send()` | Check if window allows send | ✅ YES | `send()` |
+| `on_send()` | Increment in_flight counter | ✅ YES | `send()` |
+| `on_ack()` | Grow window (AIMD increase) | ✅ **FIXED** | `process_acks()` - per packet |
+| `on_loss()` | Shrink window (AIMD decrease) | ✅ YES | NAK handler |
+| `update_rtt()` | Update RTT estimate | ✅ **FIXED** | `process_acks()` |
 
-### Problem
+### ✅ FIXED (commit 0d7a567)
 
-The congestion window **never grows** because `on_ack()` is never called. After initial slow start, the window stays at `ssthresh` forever.
-
-### Fix Required
-
-```rust
-// In receive handling, when we get confirmation of delivery:
-fn on_status_message(&mut self, acked_seq: u64) {
-    let newly_acked = acked_seq.saturating_sub(self.acked_seq);
-    for _ in 0..newly_acked {
-        self.congestion.on_ack();
-    }
-    self.acked_seq = acked_seq;
-}
-```
+- `on_ack()` now called for EACH newly acknowledged packet (not once per ACK)
+- `update_rtt()` now called with measured RTT on every ACK
+- Added `last_send_time` field for RTT measurement
 
 ---
 
@@ -207,36 +196,19 @@ fn on_status_message(&mut self, status: StatusMessage) {
 
 ## 5. RTT Estimation
 
-### Implementation: `congestion.rs` has `update_rtt()` but...
+### Implementation: `congestion.rs` + `lib.rs`
 
-| Feature | Purpose | Implemented? | Issue |
-|---------|---------|--------------|-------|
-| RTT measurement | Estimate round-trip time | ❌ **NO** | Never measured |
-| RTT smoothing | EWMA of samples | ✅ YES | Code exists |
-| Timeout calculation | Retransmit timeout | ❌ **NO** | Not used |
+| Feature | Purpose | Implemented? | Status |
+|---------|---------|--------------|--------|
+| RTT measurement | Estimate round-trip time | ✅ **FIXED** | `last_send_time` field |
+| RTT smoothing | EWMA of samples | ✅ YES | 7/8 old + 1/8 new |
+| Timeout calculation | Retransmit timeout | ⚠️ PARTIAL | RTT available, timeout not used |
 
-### Problem
+### ✅ FIXED (commit 0d7a567)
 
-RTT is hardcoded to 1ms initial value and **never updated**.
-
-### Fix Required
-
-```rust
-// On send, record timestamp
-fn send(&mut self, data: &[u8]) -> io::Result<u64> {
-    let seq = self.next_send_seq;
-    self.send_times.insert(seq, Instant::now());
-    // ... send packet
-}
-
-// On ACK/Status, measure RTT
-fn on_ack(&mut self, seq: u64) {
-    if let Some(send_time) = self.send_times.remove(&seq) {
-        let rtt_us = send_time.elapsed().as_micros() as u64;
-        self.congestion.update_rtt(rtt_us);
-    }
-}
-```
+- Added `last_send_time` field to track send timestamps
+- `update_rtt()` called on every ACK with elapsed time
+- RTT smoothed via EWMA
 
 ---
 
@@ -272,14 +244,14 @@ pub trait Reliable: Transport {
 
 ## Priority Fix Order
 
-| Priority | Issue | Effort | Impact |
-|----------|-------|--------|--------|
-| P0 | Call `on_ack()` | Low | Window never grows |
-| P0 | Call `update_rtt()` | Low | Timeout broken |
-| P1 | NAK backoff delay | Medium | NAK storm prevention |
-| P1 | Retransmit pacing | Medium | Flood prevention |
-| P2 | Status messages | High | Receiver feedback |
-| P2 | Retransmit limit | Low | Overflow protection |
+| Priority | Issue | Effort | Impact | Status |
+|----------|-------|--------|--------|--------|
+| P0 | Call `on_ack()` | Low | Window never grows | ✅ FIXED |
+| P0 | Call `update_rtt()` | Low | Timeout broken | ✅ FIXED |
+| P1 | NAK backoff delay | Medium | NAK storm prevention | ❌ TODO |
+| P1 | Retransmit pacing | Medium | Flood prevention | ❌ TODO |
+| P2 | Status messages | High | Receiver feedback | ❌ TODO |
+| P2 | Retransmit limit | Low | Overflow protection | ❌ TODO |
 
 ---
 
@@ -298,16 +270,16 @@ pub trait Reliable: Transport {
 
 ## Conclusion
 
-**The reliability layer is ~50% complete.** Core mechanisms exist but are not fully connected. Before claiming "reliable UDP", these issues must be fixed.
+**The reliability layer is ~70% complete.** Core mechanisms connected, P1/P2 items remain.
 
 ### Honest Status
 
 - ✅ Basic send/receive works
 - ✅ NAK packets sent on gap detection
 - ✅ Retransmit from send window works
-- ❌ Congestion control incomplete (no ACK handling)
-- ❌ No NAK storm protection
-- ❌ No retransmit pacing
-- ❌ No RTT measurement
-- ❌ No receiver feedback loop
+- ✅ Congestion control connected (on_ack per packet)
+- ✅ RTT measurement working
+- ❌ No NAK storm protection (P1)
+- ❌ No retransmit pacing (P1)
+- ❌ No receiver feedback loop (P2)
 
