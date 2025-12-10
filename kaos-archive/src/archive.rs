@@ -56,6 +56,7 @@ impl Archive {
         let handle = thread::spawn(move || {
             let mut archive = SyncArchive::create(&path, capacity).expect("Failed to create archive");
             let mut consumer = 0u64;
+            let mut batch_buf: Vec<&[u8]> = Vec::with_capacity(64);
 
             while state_clone.running.load(Ordering::Relaxed) {
                 let producer = state_clone.producer_cursor.0.load(Ordering::Acquire);
@@ -64,18 +65,26 @@ impl Archive {
                     continue;
                 }
 
-                let batch = ((producer - consumer) as usize).min(64);
-                for _ in 0..batch {
-                    let slot = unsafe { &*state_clone.ring.as_ptr().add((consumer as usize) & RING_MASK) };
+                // Collect batch
+                batch_buf.clear();
+                let batch_size = ((producer - consumer) as usize).min(64);
+                for i in 0..batch_size {
+                    let slot = unsafe { &*state_clone.ring.as_ptr().add(((consumer + i as u64) as usize) & RING_MASK) };
                     if slot.len > 0 {
-                        let _ = archive.append_no_index(&slot.data[..slot.len as usize]);
+                        batch_buf.push(unsafe { std::slice::from_raw_parts(slot.data.as_ptr(), slot.len as usize) });
                     }
-                    consumer += 1;
                 }
+
+                // Batch write
+                if !batch_buf.is_empty() {
+                    let _ = archive.append_batch(&batch_buf);
+                }
+
+                consumer += batch_size as u64;
                 state_clone.consumer_cursor.0.store(consumer, Ordering::Release);
             }
 
-            // Drain
+            // Drain remaining
             let producer = state_clone.producer_cursor.0.load(Ordering::Acquire);
             while consumer < producer {
                 let slot = unsafe { &*state_clone.ring.as_ptr().add((consumer as usize) & RING_MASK) };
@@ -116,6 +125,16 @@ impl Archive {
         }
 
         Ok(seq)
+    }
+
+    /// Batch append multiple messages.
+    #[inline]
+    pub fn append_batch(&mut self, messages: &[&[u8]]) -> Result<u64, ArchiveError> {
+        let start_seq = self.local_cursor;
+        for msg in messages {
+            self.append(msg)?;
+        }
+        Ok(start_seq)
     }
 
     pub fn flush(&mut self) {
