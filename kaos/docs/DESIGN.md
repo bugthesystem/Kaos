@@ -30,6 +30,26 @@ Lock-free ring buffers implementing LMAX Disruptor pattern.
 | SPMC | 1 | N | CAS + completion |
 | MPMC | N | N | Full CAS |
 
+## Archive Design
+
+Two archive implementations for different use cases:
+
+| Archive | Throughput | Latency | Use Case |
+|---------|-----------|---------|----------|
+| `Archive` | 22 M/s | Low | Sync writes, simple API |
+| `AsyncArchive` | 30-34 M/s | Variable | Max throughput, background persistence |
+
+**AsyncArchive** uses SPSC ring buffer + background writer thread:
+```
+Producer → Ring Buffer → Background Thread → mmap
+           (30 M/s)         (persists)
+```
+
+Key optimizations:
+- Batched publish (every 64 messages)
+- No per-slot atomics (just 2 cursors)
+- Cache-line padded cursors
+
 ## Memory Ordering
 
 ```rust

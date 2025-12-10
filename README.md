@@ -30,7 +30,7 @@ Kaos provides lock-free ring buffers for inter-thread, inter-process, and networ
 | **[kaos](./kaos)** | Lock-free ring buffers (SPSC, MPSC, SPMC, MPMC) |
 | **[kaos-ipc](./kaos-ipc)** | Shared memory IPC via mmap |
 | **[kaos-rudp](./kaos-rudp)** | Reliable UDP with NAK/ACK |
-| **[kaos-archive](./kaos-archive)** | Persistent message archive for retransmission |
+| **[kaos-archive](./kaos-archive)** | Persistent message archive (sync + async) |
 | **[kaos-driver](./kaos-driver)** | Media driver for zero-syscall I/O |
 
 ## Features
@@ -100,7 +100,8 @@ Measured on Apple M1 Pro (actual `cargo bench` results).
 | IPC single send (8B) | 147 M/s |
 | IPC sustained (100K) | 595 M/s |
 | RUDP (reliable UDP) | 3.7 M/s (vs Aeron 2.6 M/s) |
-| Archive IPC (64B) | 12 M/s |
+| Archive (sync) | 22 M/s |
+| Archive (async) | 30-34 M/s (vs Aeron 26 M/s) |
 | Archive read (64B) | 35 ns |
 
 ```bash

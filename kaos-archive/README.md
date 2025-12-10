@@ -9,38 +9,45 @@ High-performance message archive using memory-mapped files.
 - **CRC32 checksums** - Data integrity verification
 - **Index file** - O(1) message lookup by sequence
 
+## Archive Types
+
+| Type | Throughput | Use Case |
+|------|-----------|----------|
+| `Archive` | 22 M/s | Sync writes, simple API, low latency |
+| `AsyncArchive` | 30-34 M/s | Max throughput, background persistence |
+
+**When to use which:**
+- `Archive` — Simple, predictable latency, crash-safe on each write
+- `AsyncArchive` — Higher throughput, trades latency for speed, must call `flush()`
+
 ## Performance (Apple M1 Pro)
 
 | Operation | Size | Result |
 |-----------|------|--------|
-| Append | 64B | ~15 MiB/s |
-| Append | 1KB | ~200 MiB/s |
-| Append | 4KB | ~600 MiB/s |
+| Archive append | 64B | 22 M/s |
+| AsyncArchive append | 64B | 30-34 M/s |
 | Read (unchecked) | 64B | ~30 ns |
 
-Read returns direct mmap pointer (zero-copy after index lookup).
-
 ## Usage
+
+### Sync Archive (simple, low latency)
 
 ```rust
 use kaos_archive::Archive;
 
-// Create archive (1GB capacity)
 let mut archive = Archive::create("/tmp/messages", 1024 * 1024 * 1024)?;
-
-// Append messages
 let seq = archive.append(b"hello world")?;
-
-// Read by sequence (zero-copy)
 let msg = archive.read(seq)?;
+```
 
-// Replay range
-archive.replay(0, 1000, |seq, data| {
-    println!("{}: {:?}", seq, data);
-})?;
+### Async Archive (max throughput)
 
-// Persist to disk
-archive.flush()?;
+```rust
+use kaos_archive::AsyncArchive;
+
+let mut archive = AsyncArchive::new("/tmp/messages", 1024 * 1024 * 1024)?;
+archive.append(b"hello world")?;
+archive.flush(); // Wait for persistence
 ```
 
 ## File Format
