@@ -22,12 +22,10 @@ use std::io;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArchiveError {
-    #[error("io: {0}")]
-    Io(#[from] io::Error),
+    #[error("io: {0}")] Io(#[from] io::Error),
     #[error("archive full")]
     Full,
-    #[error("invalid sequence: {0}")]
-    InvalidSequence(u64),
+    #[error("invalid sequence: {0}")] InvalidSequence(u64),
     #[error("corrupted: checksum mismatch")]
     Corrupted,
     #[error("invalid magic")]
