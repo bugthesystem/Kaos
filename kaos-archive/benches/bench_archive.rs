@@ -1,7 +1,7 @@
 //! Archive benchmarks
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
-use kaos_archive::{Archive, SyncArchive};
+use kaos_archive::{Archive, MmapArchive};
 use tempfile::tempdir;
 
 fn bench_append(c: &mut Criterion) {
@@ -16,7 +16,7 @@ fn bench_append(c: &mut Criterion) {
                 || {
                     let dir = tempdir().unwrap();
                     let path = dir.path().join("bench");
-                    let archive = SyncArchive::create(&path, 1024 * 1024 * 1024).unwrap();
+                    let archive = MmapArchive::create(&path, 1024 * 1024 * 1024).unwrap();
                     (archive, dir)
                 },
                 |(archive, _dir)| {
@@ -42,7 +42,7 @@ fn bench_read(c: &mut Criterion) {
                 || {
                     let dir = tempdir().unwrap();
                     let path = dir.path().join("bench");
-                    let mut archive = SyncArchive::create(&path, 256 * 1024 * 1024).unwrap();
+                    let mut archive = MmapArchive::create(&path, 256 * 1024 * 1024).unwrap();
                     for _ in 0..10000 {
                         archive.append(&msg).unwrap();
                     }
@@ -67,12 +67,12 @@ fn bench_throughput(c: &mut Criterion) {
 
     let msg = vec![0u8; 64];
 
-    // SyncArchive benchmarks
+    // MmapArchive benchmarks
     group.bench_function("sync-1M-64B", |b| {
         b.iter(|| {
             let dir = tempdir().unwrap();
             let path = dir.path().join("bench");
-            let mut archive = SyncArchive::create(&path, 1024 * 1024 * 1024).unwrap();
+            let mut archive = MmapArchive::create(&path, 1024 * 1024 * 1024).unwrap();
             for _ in 0..1_000_000 {
                 black_box(archive.append(&msg).unwrap());
             }
@@ -83,7 +83,7 @@ fn bench_throughput(c: &mut Criterion) {
         b.iter(|| {
             let dir = tempdir().unwrap();
             let path = dir.path().join("bench");
-            let mut archive = SyncArchive::create(&path, 1024 * 1024 * 1024).unwrap();
+            let mut archive = MmapArchive::create(&path, 1024 * 1024 * 1024).unwrap();
             for _ in 0..1_000_000 {
                 black_box(archive.append_no_index(&msg).unwrap());
             }
@@ -94,7 +94,7 @@ fn bench_throughput(c: &mut Criterion) {
         b.iter(|| {
             let dir = tempdir().unwrap();
             let path = dir.path().join("bench");
-            let mut archive = SyncArchive::create(&path, 1024 * 1024 * 1024).unwrap();
+            let mut archive = MmapArchive::create(&path, 1024 * 1024 * 1024).unwrap();
             for _ in 0..1_000_000 {
                 unsafe { black_box(archive.append_unchecked(&msg)); }
             }
@@ -107,7 +107,7 @@ fn bench_throughput(c: &mut Criterion) {
         b.iter(|| {
             let dir = tempdir().unwrap();
             let path = dir.path().join("bench");
-            let mut archive = SyncArchive::create(&path, 1024 * 1024 * 1024).unwrap();
+            let mut archive = MmapArchive::create(&path, 1024 * 1024 * 1024).unwrap();
             for _ in 0..15625 { // 1M / 64
                 black_box(archive.append_batch(&batch).unwrap());
             }

@@ -2,10 +2,10 @@
 
 use crate::ArchiveError;
 use kaos::crc32::crc32_simd;
-use memmap2::{MmapMut, MmapOptions};
-use std::fs::{File, OpenOptions};
+use memmap2::{ MmapMut, MmapOptions };
+use std::fs::{ File, OpenOptions };
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{ AtomicU64, Ordering };
 
 #[repr(C, align(64))]
 struct LogHeader {
@@ -30,7 +30,7 @@ struct IndexEntry {
 }
 
 /// Synchronous mmap archive. Crash-safe but slower than `Archive`.
-pub struct SyncArchive {
+pub struct MmapArchive {
     log_mmap: MmapMut,
     index_mmap: MmapMut,
     _log_file: File,
@@ -43,18 +43,24 @@ pub struct SyncArchive {
     idx_len: usize,
 }
 
-impl SyncArchive {
+impl MmapArchive {
     pub fn create<P: AsRef<Path>>(base_path: P, capacity: usize) -> Result<Self, ArchiveError> {
         let base = base_path.as_ref();
 
         let log_file = OpenOptions::new()
-            .read(true).write(true).create(true).truncate(true)
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
             .open(base.with_extension("log"))?;
         log_file.set_len(capacity as u64)?;
 
         let index_capacity = (capacity / 64) * 16;
         let index_file = OpenOptions::new()
-            .read(true).write(true).create(true).truncate(true)
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
             .open(base.with_extension("idx"))?;
         index_file.set_len(index_capacity as u64)?;
 
@@ -75,9 +81,16 @@ impl SyncArchive {
         let _ = log_mmap.advise(memmap2::Advice::Sequential);
 
         Ok(Self {
-            log_mmap, index_mmap, _log_file: log_file, _index_file: index_file,
-            capacity, write_pos: HEADER_SIZE, msg_count: 0,
-            log_base, idx_base, idx_len,
+            log_mmap,
+            index_mmap,
+            _log_file: log_file,
+            _index_file: index_file,
+            capacity,
+            write_pos: HEADER_SIZE,
+            msg_count: 0,
+            log_base,
+            idx_base,
+            idx_len,
         })
     }
 
@@ -85,7 +98,10 @@ impl SyncArchive {
         let base = base_path.as_ref();
 
         let log_file = OpenOptions::new().read(true).write(true).open(base.with_extension("log"))?;
-        let index_file = OpenOptions::new().read(true).write(true).open(base.with_extension("idx"))?;
+        let index_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(base.with_extension("idx"))?;
 
         let capacity = log_file.metadata()?.len() as usize;
         let mut log_mmap = unsafe { MmapOptions::new().map_mut(&log_file)? };
@@ -102,7 +118,11 @@ impl SyncArchive {
             log_base: log_mmap.as_mut_ptr(),
             idx_base: index_mmap.as_mut_ptr(),
             idx_len: index_mmap.len(),
-            log_mmap, index_mmap, _log_file: log_file, _index_file: index_file, capacity,
+            log_mmap,
+            index_mmap,
+            _log_file: log_file,
+            _index_file: index_file,
+            capacity,
         })
     }
 
@@ -136,7 +156,9 @@ impl SyncArchive {
             return Err(ArchiveError::Full);
         }
 
-        unsafe { self.write_frame(pos, seq, data, crc, index); }
+        unsafe {
+            self.write_frame(pos, seq, data, crc, index);
+        }
 
         self.write_pos = new_pos;
         self.msg_count = seq + 1;
@@ -153,18 +175,22 @@ impl SyncArchive {
     /// Batch append same-size messages (fastest - single memcpy per message).
     #[inline]
     pub fn append_batch(&mut self, messages: &[&[u8]]) -> Result<u64, ArchiveError> {
-        if messages.is_empty() { return Ok(self.msg_count); }
-        
+        if messages.is_empty() {
+            return Ok(self.msg_count);
+        }
+
         let msg_size = messages[0].len();
         let frame_size = FRAME_HEADER_SIZE + msg_size;
         let total = frame_size * messages.len();
-        
+
         if self.write_pos + total > self.capacity {
             return Err(ArchiveError::Full);
         }
 
         let start_seq = self.msg_count;
-        unsafe { self.write_batch_raw(messages, msg_size); }
+        unsafe {
+            self.write_batch_raw(messages, msg_size);
+        }
         Ok(start_seq)
     }
 
@@ -229,12 +255,16 @@ impl SyncArchive {
             return Err(ArchiveError::InvalidSequence(seq));
         }
 
-        let entry = unsafe { &*(self.index_mmap.as_ptr().add((seq as usize) * 16) as *const IndexEntry) };
+        let entry = unsafe {
+            &*(self.index_mmap.as_ptr().add((seq as usize) * 16) as *const IndexEntry)
+        };
         let offset = entry.offset as usize;
         let length = entry.length as usize;
         let data = &self.log_mmap[offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + length];
 
-        let checksum = u32::from_ne_bytes(self.log_mmap[offset + 4..offset + 8].try_into().unwrap());
+        let checksum = u32::from_ne_bytes(
+            self.log_mmap[offset + 4..offset + 8].try_into().unwrap()
+        );
         if crc32_simd(data) != checksum {
             return Err(ArchiveError::Corrupted);
         }
@@ -248,9 +278,14 @@ impl SyncArchive {
             return Err(ArchiveError::InvalidSequence(seq));
         }
 
-        let entry = unsafe { &*(self.index_mmap.as_ptr().add((seq as usize) * 16) as *const IndexEntry) };
+        let entry = unsafe {
+            &*(self.index_mmap.as_ptr().add((seq as usize) * 16) as *const IndexEntry)
+        };
         let offset = entry.offset as usize;
-        Ok(&self.log_mmap[offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + entry.length as usize])
+        Ok(
+            &self.log_mmap
+                [offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + (entry.length as usize)]
+        )
     }
 
     // ─── Read (unsafe) ───────────────────────────────────────────────────────
@@ -262,13 +297,18 @@ impl SyncArchive {
     pub unsafe fn read_unchecked(&self, seq: u64) -> &[u8] {
         let entry = &*(self.index_mmap.as_ptr().add((seq as usize) * 16) as *const IndexEntry);
         let offset = entry.offset as usize;
-        &self.log_mmap[offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + entry.length as usize]
+        &self.log_mmap
+            [offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + (entry.length as usize)]
     }
 
     // ─── Utility ─────────────────────────────────────────────────────────────
 
-    pub fn len(&self) -> u64 { self.msg_count }
-    pub fn is_empty(&self) -> bool { self.msg_count == 0 }
+    pub fn len(&self) -> u64 {
+        self.msg_count
+    }
+    pub fn is_empty(&self) -> bool {
+        self.msg_count == 0
+    }
 
     pub fn flush(&self) -> Result<(), ArchiveError> {
         self.log_mmap.flush()?;
@@ -283,11 +323,13 @@ impl SyncArchive {
     }
 }
 
-impl Drop for SyncArchive {
-    fn drop(&mut self) { self.sync_header(); }
+impl Drop for MmapArchive {
+    fn drop(&mut self) {
+        self.sync_header();
+    }
 }
 
-unsafe impl Send for SyncArchive {}
+unsafe impl Send for MmapArchive {}
 
 #[cfg(test)]
 mod tests {
@@ -297,16 +339,16 @@ mod tests {
     #[test]
     fn test_sync_archive() {
         let dir = tempdir().unwrap();
-        let mut archive = SyncArchive::create(dir.path().join("test"), 1024 * 1024).unwrap();
-        
+        let mut archive = MmapArchive::create(dir.path().join("test"), 1024 * 1024).unwrap();
+
         // Safe API with CRC
         let seq = archive.append(b"hello").unwrap();
         assert_eq!(archive.read(seq).unwrap(), b"hello");
-        
+
         // Safe API without CRC
         let seq2 = archive.append_no_crc(b"world").unwrap();
         assert_eq!(archive.read_no_verify(seq2).unwrap(), b"world");
-        
+
         // Unsafe read (seq must be valid)
         unsafe {
             assert_eq!(archive.read_unchecked(seq), b"hello");

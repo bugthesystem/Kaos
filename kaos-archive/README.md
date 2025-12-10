@@ -7,14 +7,14 @@ Message archive with mmap for random read access.
 | Type | Throughput | Use Case |
 |------|-----------|----------|
 | `Archive` | 17 M/s | Async, background writer |
-| `SyncArchive` | 28 M/s | Sync, crash-safe per write |
+| `MmapArchive` | 28 M/s | Sync, crash-safe per write |
 
 ## Usage
 
 ```rust
-use kaos_archive::SyncArchive;
+use kaos_archive::MmapArchive;
 
-let mut archive = SyncArchive::create("/tmp/log", 1024 * 1024)?;
+let mut archive = MmapArchive::create("/tmp/log", 1024 * 1024)?;
 archive.append(b"hello")?;
 let msg = archive.read(0)?; // Random read by sequence
 ```

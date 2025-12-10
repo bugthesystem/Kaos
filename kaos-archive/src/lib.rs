@@ -1,13 +1,13 @@
 //! Message archive using memory-mapped files.
 //!
-//! - `Archive` - 17 M/s, background writer, call `flush()`
-//! - `SyncArchive` - 28 M/s, crash-safe per write
+//! - `Archive` - background writer, call `flush()`
+//! - `MmapArchive` - faster but crash-safe per write
 
 mod archive;
-mod sync_archive;
+mod mmap_archive;
 
 pub use archive::Archive;
-pub use sync_archive::SyncArchive;
+pub use mmap_archive::MmapArchive;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArchiveError {

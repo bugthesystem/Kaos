@@ -1,10 +1,10 @@
 //! Fast archive with SPSC ring buffer + background writer (30-34 M/s).
 
-use crate::{ArchiveError, SyncArchive};
+use crate::{ ArchiveError, MmapArchive };
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{ AtomicBool, AtomicU64, Ordering };
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::thread::{ self, JoinHandle };
 
 const RING_SIZE: usize = 65536;
 const RING_MASK: usize = RING_SIZE - 1;
@@ -20,7 +20,9 @@ struct Slot {
 }
 
 impl Default for Slot {
-    fn default() -> Self { Self { len: 0, data: [0u8; MAX_MSG_SIZE] } }
+    fn default() -> Self {
+        Self { len: 0, data: [0u8; MAX_MSG_SIZE] }
+    }
 }
 
 struct SharedState {
@@ -54,7 +56,9 @@ impl Archive {
 
         let state_clone = state.clone();
         let handle = thread::spawn(move || {
-            let mut archive = SyncArchive::create(&path, capacity).expect("Failed to create archive");
+            let mut archive = MmapArchive::create(&path, capacity).expect(
+                "Failed to create archive"
+            );
             let mut consumer = 0u64;
             let mut batch_buf: Vec<&[u8]> = Vec::with_capacity(64);
 
@@ -69,9 +73,15 @@ impl Archive {
                 batch_buf.clear();
                 let batch_size = ((producer - consumer) as usize).min(64);
                 for i in 0..batch_size {
-                    let slot = unsafe { &*state_clone.ring.as_ptr().add(((consumer + i as u64) as usize) & RING_MASK) };
+                    let slot = unsafe {
+                        &*state_clone.ring
+                            .as_ptr()
+                            .add(((consumer + (i as u64)) as usize) & RING_MASK)
+                    };
                     if slot.len > 0 {
-                        batch_buf.push(unsafe { std::slice::from_raw_parts(slot.data.as_ptr(), slot.len as usize) });
+                        batch_buf.push(unsafe {
+                            std::slice::from_raw_parts(slot.data.as_ptr(), slot.len as usize)
+                        });
                     }
                 }
 
@@ -87,7 +97,9 @@ impl Archive {
             // Drain remaining
             let producer = state_clone.producer_cursor.0.load(Ordering::Acquire);
             while consumer < producer {
-                let slot = unsafe { &*state_clone.ring.as_ptr().add((consumer as usize) & RING_MASK) };
+                let slot = unsafe {
+                    &*state_clone.ring.as_ptr().add((consumer as usize) & RING_MASK)
+                };
                 if slot.len > 0 {
                     let _ = archive.append_no_index(&slot.data[..slot.len as usize]);
                 }
@@ -106,16 +118,22 @@ impl Archive {
         }
 
         let next = self.local_cursor + 1;
-        if next - self.cached_consumer > RING_SIZE as u64 {
+        if next - self.cached_consumer > (RING_SIZE as u64) {
             self.cached_consumer = self.state.consumer_cursor.0.load(Ordering::Acquire);
-            if next - self.cached_consumer > RING_SIZE as u64 {
+            if next - self.cached_consumer > (RING_SIZE as u64) {
                 return Err(ArchiveError::Full);
             }
         }
 
-        let slot = unsafe { &mut *(self.state.ring.as_ptr().add((self.local_cursor as usize) & RING_MASK) as *mut Slot) };
+        let slot = unsafe {
+            &mut *(
+                self.state.ring.as_ptr().add((self.local_cursor as usize) & RING_MASK) as *mut Slot
+            )
+        };
         slot.len = data.len() as u16;
-        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), slot.data.as_mut_ptr(), data.len()); }
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), slot.data.as_mut_ptr(), data.len());
+        }
 
         let seq = self.local_cursor;
         self.local_cursor = next;
@@ -149,7 +167,9 @@ impl Drop for Archive {
     fn drop(&mut self) {
         self.flush();
         self.state.running.store(false, Ordering::Release);
-        if let Some(h) = self.writer_handle.take() { let _ = h.join(); }
+        if let Some(h) = self.writer_handle.take() {
+            let _ = h.join();
+        }
     }
 }
 
@@ -165,7 +185,9 @@ mod tests {
     fn test_archive() {
         let dir = tempdir().unwrap();
         let mut archive = Archive::new(dir.path().join("test"), 1024 * 1024).unwrap();
-        for i in 0..100u64 { archive.append(&i.to_le_bytes()).unwrap(); }
+        for i in 0..100u64 {
+            archive.append(&i.to_le_bytes()).unwrap();
+        }
         archive.flush();
     }
 }
