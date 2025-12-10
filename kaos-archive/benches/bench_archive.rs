@@ -90,6 +90,17 @@ fn bench_throughput(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("sync-1M-64B-unchecked", |b| {
+        b.iter(|| {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("bench");
+            let mut archive = SyncArchive::create(&path, 1024 * 1024 * 1024).unwrap();
+            for _ in 0..1_000_000 {
+                unsafe { black_box(archive.append_unchecked(&msg)); }
+            }
+        });
+    });
+
     // Archive (async) benchmark
     group.bench_function("async-1M-64B", |b| {
         b.iter(|| {
