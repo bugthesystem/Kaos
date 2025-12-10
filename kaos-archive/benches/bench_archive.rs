@@ -1,7 +1,7 @@
 //! Archive benchmarks
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
-use kaos_archive::Archive;
+use kaos_archive::{Archive, SyncArchive};
 use tempfile::tempdir;
 
 fn bench_append(c: &mut Criterion) {
@@ -11,18 +11,18 @@ fn bench_append(c: &mut Criterion) {
         let msg = vec![0u8; size];
 
         group.throughput(Throughput::Bytes(size as u64));
-        group.bench_function(format!("{}B", size), |b| {
+        group.bench_function(format!("sync-{}B", size), |b| {
             b.iter_batched_ref(
                 || {
                     let dir = tempdir().unwrap();
                     let path = dir.path().join("bench");
-                    let archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
-                    (archive, dir) // keep dir alive
+                    let archive = SyncArchive::create(&path, 1024 * 1024 * 1024).unwrap();
+                    (archive, dir)
                 },
                 |(archive, _dir)| {
                     black_box(archive.append(&msg).unwrap());
                 },
-                BatchSize::NumIterations(1_000_000), // 1M appends per archive
+                BatchSize::NumIterations(1_000_000),
             );
         });
     }
@@ -42,8 +42,7 @@ fn bench_read(c: &mut Criterion) {
                 || {
                     let dir = tempdir().unwrap();
                     let path = dir.path().join("bench");
-                    let mut archive = Archive::create(&path, 256 * 1024 * 1024).unwrap();
-                    // Pre-populate
+                    let mut archive = SyncArchive::create(&path, 256 * 1024 * 1024).unwrap();
                     for _ in 0..10000 {
                         archive.append(&msg).unwrap();
                     }
@@ -68,71 +67,35 @@ fn bench_throughput(c: &mut Criterion) {
 
     let msg = vec![0u8; 64];
 
-    group.bench_function("1M-appends-64B", |b| {
+    // SyncArchive benchmarks
+    group.bench_function("sync-1M-64B", |b| {
         b.iter(|| {
             let dir = tempdir().unwrap();
             let path = dir.path().join("bench");
-            let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
+            let mut archive = SyncArchive::create(&path, 1024 * 1024 * 1024).unwrap();
             for _ in 0..1_000_000 {
                 black_box(archive.append(&msg).unwrap());
             }
         });
     });
 
-    // Fair comparison with Aeron: no CRC, yes index
-    group.bench_function("1M-appends-64B-unchecked", |b| {
+    group.bench_function("sync-1M-64B-no-index", |b| {
         b.iter(|| {
             let dir = tempdir().unwrap();
             let path = dir.path().join("bench");
-            let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
-            for _ in 0..1_000_000 {
-                black_box(archive.append_unchecked(&msg).unwrap());
-            }
-        });
-    });
-
-    // No CRC, no index
-    group.bench_function("1M-appends-64B-no-index", |b| {
-        b.iter(|| {
-            let dir = tempdir().unwrap();
-            let path = dir.path().join("bench");
-            let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
+            let mut archive = SyncArchive::create(&path, 1024 * 1024 * 1024).unwrap();
             for _ in 0..1_000_000 {
                 black_box(archive.append_no_index(&msg).unwrap());
             }
         });
     });
 
-    group.bench_function("1M-appends-64B-raw", |b| {
+    // Archive (async) benchmark
+    group.bench_function("async-1M-64B", |b| {
         b.iter(|| {
             let dir = tempdir().unwrap();
             let path = dir.path().join("bench");
-            let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
-            for _ in 0..1_000_000 {
-                unsafe { black_box(archive.append_raw(&msg)) };
-            }
-        });
-    });
-
-    // Batch: 16 messages at a time
-    let batch: Vec<&[u8]> = (0..16).map(|_| msg.as_slice()).collect();
-    group.bench_function("1M-appends-64B-batch16", |b| {
-        b.iter(|| {
-            let dir = tempdir().unwrap();
-            let path = dir.path().join("bench");
-            let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
-            for _ in 0..62500 {
-                unsafe { black_box(archive.append_batch_raw(&batch)) };
-            }
-        });
-    });
-
-    // Async archive (IPC + background writer)
-    group.bench_function("1M-appends-64B-async", |b| {
-        b.iter(|| {
-            let dir = tempdir().unwrap();
-            let path = dir.path().join("bench");
-            let archive = kaos_archive::AsyncArchive::new(&path, 1024 * 1024 * 1024).unwrap();
+            let mut archive = Archive::new(&path, 1024 * 1024 * 1024).unwrap();
             for _ in 0..1_000_000 {
                 while archive.append(&msg).is_err() {
                     std::hint::spin_loop();

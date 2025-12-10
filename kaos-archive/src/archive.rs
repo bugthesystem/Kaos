@@ -1,8 +1,8 @@
-//! Async archive using optimized SPSC ring buffer + background writer.
+//! Fast archive with SPSC ring buffer + background writer.
 //!
-//! Single producer cursor, single consumer cursor - no per-slot atomics.
+//! 30-34 M/s throughput. Call `flush()` to ensure persistence.
 
-use crate::{Archive, ArchiveError};
+use crate::{ArchiveError, SyncArchive};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -12,11 +12,9 @@ const RING_SIZE: usize = 65536;
 const RING_MASK: usize = RING_SIZE - 1;
 const MAX_MSG_SIZE: usize = 1024;
 
-/// Cache-line padded cursor
 #[repr(C, align(128))]
 struct PaddedU64(AtomicU64);
 
-/// Slot in the ring buffer (cache-line sized)
 #[repr(C, align(64))]
 struct Slot {
     len: u16,
@@ -32,28 +30,29 @@ impl Default for Slot {
     }
 }
 
-/// Shared state between producer and consumer
 struct SharedState {
     ring: Vec<Slot>,
-    producer_cursor: PaddedU64,  // Written by producer, read by consumer
-    consumer_cursor: PaddedU64,  // Written by consumer, read by producer
+    producer_cursor: PaddedU64,
+    consumer_cursor: PaddedU64,
     running: AtomicBool,
 }
 
-/// Async archive with SPSC ring buffer for fast appends.
-pub struct AsyncArchive {
+/// Fast archive with background persistence (30-34 M/s).
+///
+/// Uses SPSC ring buffer for writes, background thread persists to disk.
+/// Call `flush()` to wait for all pending writes.
+pub struct Archive {
     state: Arc<SharedState>,
-    local_cursor: u64,  // Local producer cursor (no atomics on hot path)
-    cached_consumer: u64,  // Cached consumer position
+    local_cursor: u64,
+    cached_consumer: u64,
     writer_handle: Option<JoinHandle<()>>,
 }
 
-impl AsyncArchive {
-    /// Create a new async archive.
+impl Archive {
+    /// Create a new archive.
     pub fn new<P: AsRef<Path>>(base_path: P, capacity: usize) -> Result<Self, ArchiveError> {
         let path = base_path.as_ref().to_path_buf();
 
-        // Pre-allocate ring buffer
         let mut slots = Vec::with_capacity(RING_SIZE);
         for _ in 0..RING_SIZE {
             slots.push(Slot::default());
@@ -68,20 +67,17 @@ impl AsyncArchive {
 
         let state_clone = state.clone();
 
-        // Background writer
         let handle = thread::spawn(move || {
-            let mut archive = Archive::create(&path, capacity).expect("Failed to create archive");
+            let mut archive = SyncArchive::create(&path, capacity).expect("Failed to create archive");
             let mut local_consumer = 0u64;
 
             while state_clone.running.load(Ordering::Relaxed) {
-                // Check how many slots available
                 let producer = state_clone.producer_cursor.0.load(Ordering::Acquire);
                 if producer == local_consumer {
                     std::hint::spin_loop();
                     continue;
                 }
 
-                // Process batch
                 let available = (producer - local_consumer) as usize;
                 let batch = available.min(64);
 
@@ -95,7 +91,6 @@ impl AsyncArchive {
                     local_consumer += 1;
                 }
 
-                // Publish consumer position
                 state_clone.consumer_cursor.0.store(local_consumer, Ordering::Release);
             }
 
@@ -121,24 +116,21 @@ impl AsyncArchive {
         })
     }
 
-    /// Append a message (non-blocking, writes to ring buffer).
+    /// Append a message (writes to ring buffer, persisted async).
     #[inline(always)]
     pub fn append(&mut self, data: &[u8]) -> Result<u64, ArchiveError> {
         if data.len() > MAX_MSG_SIZE {
             return Err(ArchiveError::Full);
         }
 
-        // Check if we have space (using cached consumer)
         let next = self.local_cursor + 1;
         if next - self.cached_consumer > RING_SIZE as u64 {
-            // Update cache
             self.cached_consumer = self.state.consumer_cursor.0.load(Ordering::Acquire);
             if next - self.cached_consumer > RING_SIZE as u64 {
                 return Err(ArchiveError::Full);
             }
         }
 
-        // Write to slot
         let idx = (self.local_cursor as usize) & RING_MASK;
         let slot = unsafe { &mut *(self.state.ring.as_ptr().add(idx) as *mut Slot) };
         slot.len = data.len() as u16;
@@ -149,7 +141,7 @@ impl AsyncArchive {
         let seq = self.local_cursor;
         self.local_cursor = next;
 
-        // Batch publish (every 64 messages)
+        // Batch publish every 64 messages
         if (next & 63) == 0 {
             self.state.producer_cursor.0.store(next, Ordering::Release);
         }
@@ -157,11 +149,9 @@ impl AsyncArchive {
         Ok(seq)
     }
 
-    /// Wait for all pending messages to be archived.
+    /// Wait for all pending messages to be persisted.
     pub fn flush(&mut self) {
-        // Publish any remaining
         self.state.producer_cursor.0.store(self.local_cursor, Ordering::Release);
-        
         let target = self.local_cursor;
         while self.state.consumer_cursor.0.load(Ordering::Acquire) < target {
             std::hint::spin_loop();
@@ -169,7 +159,7 @@ impl AsyncArchive {
     }
 }
 
-impl Drop for AsyncArchive {
+impl Drop for Archive {
     fn drop(&mut self) {
         self.flush();
         self.state.running.store(false, Ordering::Release);
@@ -179,7 +169,6 @@ impl Drop for AsyncArchive {
     }
 }
 
-// Safety: SharedState is thread-safe via atomics
 unsafe impl Send for SharedState {}
 unsafe impl Sync for SharedState {}
 
@@ -189,11 +178,11 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_async_archive() {
+    fn test_archive() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test");
 
-        let mut archive = AsyncArchive::new(&path, 1024 * 1024).unwrap();
+        let mut archive = Archive::new(&path, 1024 * 1024).unwrap();
 
         for i in 0..100u64 {
             archive.append(&i.to_le_bytes()).unwrap();
@@ -203,13 +192,13 @@ mod tests {
     }
 
     #[test]
-    fn test_async_throughput() {
+    fn test_throughput() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test");
 
-        let mut archive = AsyncArchive::new(&path, 1024 * 1024 * 1024).unwrap();
+        let mut archive = Archive::new(&path, 1024 * 1024 * 1024).unwrap();
         let msg = [0u8; 64];
-        
+
         // Warmup
         for _ in 0..10_000 {
             archive.append(&msg).unwrap();
@@ -227,8 +216,9 @@ mod tests {
         let elapsed = start.elapsed();
 
         let rate = count as f64 / elapsed.as_secs_f64() / 1_000_000.0;
-        println!("AsyncArchive (optimized SPSC): {:.2} M/s", rate);
+        println!("Archive: {:.2} M/s", rate);
 
         archive.flush();
     }
 }
+

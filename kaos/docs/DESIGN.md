@@ -32,14 +32,12 @@ Lock-free ring buffers implementing LMAX Disruptor pattern.
 
 ## Archive Design
 
-Two archive implementations for different use cases:
+| Type | Throughput | When to Use |
+|------|-----------|-------------|
+| `Archive` | 30-34 M/s | Default. Max throughput |
+| `SyncArchive` | 22 M/s | Crash-safe per write |
 
-| Archive | Throughput | Latency | Use Case |
-|---------|-----------|---------|----------|
-| `Archive` | 22 M/s | Low | Sync writes, simple API |
-| `AsyncArchive` | 30-34 M/s | Variable | Max throughput, background persistence |
-
-**AsyncArchive** uses SPSC ring buffer + background writer thread:
+**Archive** uses SPSC ring buffer + background writer:
 ```
 Producer → Ring Buffer → Background Thread → mmap
            (30 M/s)         (persists)

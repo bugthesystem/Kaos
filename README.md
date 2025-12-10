@@ -100,8 +100,8 @@ Measured on Apple M1 Pro (actual `cargo bench` results).
 | IPC single send (8B) | 147 M/s |
 | IPC sustained (100K) | 595 M/s |
 | RUDP (reliable UDP) | 3.7 M/s (vs Aeron 2.6 M/s) |
-| Archive (sync) | 22 M/s |
-| Archive (async) | 30-34 M/s (vs Aeron 26 M/s) |
+| Archive | 30-34 M/s (vs Aeron 26 M/s) |
+| SyncArchive | 22 M/s |
 | Archive read (64B) | 35 ns |
 
 ```bash
