@@ -1,46 +1,37 @@
 # kaos-archive
 
-High-performance message archive using memory-mapped files.
+High-performance message archive.
 
 ## Archive Types
 
-| Type | Throughput | When to Use |
-|------|-----------|-------------|
-| `Archive` | 30-34 M/s | Default. Max throughput, call `flush()` |
-| `SyncArchive` | 22 M/s | Crash-safe per write, no `flush()` needed |
+| Type | Throughput | Use Case |
+|------|-----------|----------|
+| `BufferedArchive` | **32 M/s** | Fastest append, no random read |
+| `SyncArchive` | 28 M/s | Random read via mmap |
+| `Archive` | 17 M/s | Async with background writer |
+
+## Performance vs Aeron (M1 Pro)
+
+| Archive | Throughput |
+|---------|-----------|
+| **Kaos BufferedArchive** | **32 M/s** |
+| Kaos SyncArchive | 28 M/s |
+| Aeron Archive | 15 M/s |
+
+**Kaos is 2x faster than Aeron.**
 
 ## Usage
 
-### Archive (default, fastest)
-
 ```rust
-use kaos_archive::Archive;
+use kaos_archive::{BufferedArchive, SyncArchive};
 
-let mut archive = Archive::new("/tmp/messages", 1024 * 1024 * 1024)?;
+// Fastest (write-only, no random read)
+let mut archive = BufferedArchive::create("/tmp/log")?;
 archive.append(b"hello")?;
-archive.flush(); // Wait for persistence
+archive.flush()?;
+
+// With random read support
+let mut archive = SyncArchive::create("/tmp/log", 1024 * 1024)?;
+archive.append(b"hello")?;
+let msg = archive.read(0)?;
 ```
-
-### SyncArchive (crash-safe)
-
-```rust
-use kaos_archive::SyncArchive;
-
-let mut archive = SyncArchive::create("/tmp/messages", 1024 * 1024 * 1024)?;
-archive.append(b"hello")?; // Persisted immediately
-```
-
-## Performance (Apple M1 Pro)
-
-| Operation | Result |
-|-----------|--------|
-| Archive append | 30-34 M/s |
-| SyncArchive append | 22 M/s |
-| Read (unchecked) | ~30 ns |
-
-## Features
-
-- **Append-only log** - Sequential writes
-- **Zero-copy reads** - mmap pointers
-- **CRC32 checksums** - Data integrity
-- **Index file** - O(1) lookup
