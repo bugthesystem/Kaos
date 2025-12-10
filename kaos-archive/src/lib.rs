@@ -170,6 +170,45 @@ impl Archive {
         self.append_with_options(data, false, false)
     }
 
+    /// Raw append: no bounds check, no index, no CRC. Minimal overhead.
+    /// # Safety
+    /// Caller must ensure capacity is sufficient.
+    #[inline(always)]
+    pub unsafe fn append_raw(&mut self, data: &[u8]) -> u64 {
+        let seq = self.msg_count;
+        let pos = self.write_pos;
+        let base = self.log_mmap.as_mut_ptr().add(pos);
+
+        // Write length (4 bytes) + data directly
+        std::ptr::write_unaligned(base as *mut u32, data.len() as u32);
+        std::ptr::copy_nonoverlapping(data.as_ptr(), base.add(4), data.len());
+
+        self.write_pos = pos + 4 + data.len();
+        self.msg_count = seq + 1;
+        seq
+    }
+
+    /// Batch append multiple messages. No bounds check, no index, no CRC.
+    /// # Safety
+    /// Caller must ensure capacity is sufficient for all messages.
+    #[inline(always)]
+    pub unsafe fn append_batch_raw(&mut self, messages: &[&[u8]]) -> u64 {
+        let start_seq = self.msg_count;
+        let mut pos = self.write_pos;
+        let base = self.log_mmap.as_mut_ptr();
+
+        for data in messages {
+            let dst = base.add(pos);
+            std::ptr::write_unaligned(dst as *mut u32, data.len() as u32);
+            std::ptr::copy_nonoverlapping(data.as_ptr(), dst.add(4), data.len());
+            pos += 4 + data.len();
+        }
+
+        self.write_pos = pos;
+        self.msg_count += messages.len() as u64;
+        start_seq
+    }
+
     /// Append with configurable options.
     #[inline(always)]
     fn append_with_options(

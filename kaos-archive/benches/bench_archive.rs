@@ -90,6 +90,30 @@ fn bench_throughput(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("1M-appends-64B-raw", |b| {
+        b.iter(|| {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("bench");
+            let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
+            for _ in 0..1_000_000 {
+                unsafe { black_box(archive.append_raw(&msg)) };
+            }
+        });
+    });
+
+    // Batch: 16 messages at a time
+    let batch: Vec<&[u8]> = (0..16).map(|_| msg.as_slice()).collect();
+    group.bench_function("1M-appends-64B-batch16", |b| {
+        b.iter(|| {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("bench");
+            let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
+            for _ in 0..62500 {
+                unsafe { black_box(archive.append_batch_raw(&batch)) };
+            }
+        });
+    });
+
     group.finish();
 }
 
