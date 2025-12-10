@@ -57,6 +57,10 @@ pub struct Archive {
     // Local state cache (avoid atomic reads on hot path)
     write_pos: usize,
     msg_count: u64,
+    // Cached pointers (avoid repeated as_mut_ptr calls)
+    log_base: *mut u8,
+    idx_base: *mut u8,
+    idx_len: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -99,7 +103,7 @@ impl Archive {
 
         // Memory map
         let mut log_mmap = unsafe { MmapOptions::new().map_mut(&log_file)? };
-        let index_mmap = unsafe { MmapOptions::new().map_mut(&index_file)? };
+        let mut index_mmap = unsafe { MmapOptions::new().map_mut(&index_file)? };
 
         // Initialize header
         let header = unsafe { &mut *(log_mmap.as_mut_ptr() as *mut LogHeader) };
@@ -107,6 +111,10 @@ impl Archive {
         header.version = 1;
         header.write_pos.store(HEADER_SIZE as u64, Ordering::Release);
         header.msg_count.store(0, Ordering::Release);
+
+        let log_base = log_mmap.as_mut_ptr();
+        let idx_base = index_mmap.as_mut_ptr();
+        let idx_len = index_mmap.len();
 
         Ok(Self {
             log_mmap,
@@ -116,6 +124,9 @@ impl Archive {
             capacity,
             write_pos: HEADER_SIZE,
             msg_count: 0,
+            log_base,
+            idx_base,
+            idx_len,
         })
     }
 
@@ -129,8 +140,8 @@ impl Archive {
         let index_file = OpenOptions::new().read(true).write(true).open(&index_path)?;
 
         let capacity = log_file.metadata()?.len() as usize;
-        let log_mmap = unsafe { MmapOptions::new().map_mut(&log_file)? };
-        let index_mmap = unsafe { MmapOptions::new().map_mut(&index_file)? };
+        let mut log_mmap = unsafe { MmapOptions::new().map_mut(&log_file)? };
+        let mut index_mmap = unsafe { MmapOptions::new().map_mut(&index_file)? };
 
         // Verify magic and read state
         let header = unsafe { &*(log_mmap.as_ptr() as *const LogHeader) };
@@ -140,6 +151,10 @@ impl Archive {
         let write_pos = header.write_pos.load(Ordering::Relaxed) as usize;
         let msg_count = header.msg_count.load(Ordering::Relaxed);
 
+        let log_base = log_mmap.as_mut_ptr();
+        let idx_base = index_mmap.as_mut_ptr();
+        let idx_len = index_mmap.len();
+
         Ok(Self {
             log_mmap,
             index_mmap,
@@ -148,6 +163,9 @@ impl Archive {
             capacity,
             write_pos,
             msg_count,
+            log_base,
+            idx_base,
+            idx_len,
         })
     }
 
@@ -177,7 +195,7 @@ impl Archive {
     pub unsafe fn append_raw(&mut self, data: &[u8]) -> u64 {
         let seq = self.msg_count;
         let pos = self.write_pos;
-        let base = self.log_mmap.as_mut_ptr().add(pos);
+        let base = self.log_base.add(pos);
 
         // Write length (4 bytes) + data directly
         std::ptr::write_unaligned(base as *mut u32, data.len() as u32);
@@ -195,7 +213,7 @@ impl Archive {
     pub unsafe fn append_batch_raw(&mut self, messages: &[&[u8]]) -> u64 {
         let start_seq = self.msg_count;
         let mut pos = self.write_pos;
-        let base = self.log_mmap.as_mut_ptr();
+        let base = self.log_base;
 
         for data in messages {
             let dst = base.add(pos);
@@ -215,45 +233,34 @@ impl Archive {
         &mut self,
         data: &[u8],
         compute_crc: bool,
-        update_index: bool
+        update_index: bool,
     ) -> Result<u64, ArchiveError> {
-        // Use local cached state (no atomic reads on hot path)
         let seq = self.msg_count;
         let pos = self.write_pos;
-
-        let frame_size = FRAME_HEADER_SIZE + data.len();
-        let new_pos = pos + frame_size;
+        let new_pos = pos + FRAME_HEADER_SIZE + data.len();
 
         if new_pos > self.capacity {
             return Err(ArchiveError::Full);
         }
 
-        // Write frame header + payload in one go
-        let checksum = if compute_crc { crc32_simd(data) } else { 0 };
         unsafe {
-            let base = self.log_mmap.as_mut_ptr().add(pos);
-            // Write header
-            std::ptr::write(base as *mut FrameHeader, FrameHeader {
-                length: data.len() as u32,
-                checksum,
-            });
+            let base = self.log_base.add(pos);
+
+            // Write header (8 bytes: length + checksum) using unaligned writes
+            let checksum = if compute_crc { crc32_simd(data) } else { 0 };
+            std::ptr::write_unaligned(base as *mut u32, data.len() as u32);
+            std::ptr::write_unaligned(base.add(4) as *mut u32, checksum);
+
             // Write payload
             std::ptr::copy_nonoverlapping(data.as_ptr(), base.add(FRAME_HEADER_SIZE), data.len());
-        }
 
-        // Update index (optional)
-        if update_index {
-            let idx_pos = (seq as usize) * std::mem::size_of::<IndexEntry>();
-            if idx_pos + std::mem::size_of::<IndexEntry>() <= self.index_mmap.len() {
-                unsafe {
-                    std::ptr::write(
-                        self.index_mmap.as_mut_ptr().add(idx_pos) as *mut IndexEntry,
-                        IndexEntry {
-                            offset: pos as u64,
-                            length: data.len() as u32,
-                            _pad: 0,
-                        }
-                    );
+            // Update index using cached pointer and bit shift
+            if update_index {
+                let idx_pos = (seq as usize) << 4; // * 16
+                if idx_pos + 16 <= self.idx_len {
+                    let idx_ptr = self.idx_base.add(idx_pos);
+                    std::ptr::write_unaligned(idx_ptr as *mut u64, pos as u64);
+                    std::ptr::write_unaligned(idx_ptr.add(8) as *mut u32, data.len() as u32);
                 }
             }
         }
