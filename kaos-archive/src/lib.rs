@@ -1,22 +1,22 @@
 //! Message archive using memory-mapped files.
 //!
-//! - `Archive` - 30-34 M/s, background writer, call `flush()`
-//! - `SyncArchive` - 22 M/s, crash-safe per write
+//! - `Archive` - 17 M/s, background writer, call `flush()`
+//! - `SyncArchive` - 28 M/s, crash-safe per write
 
 mod archive;
-mod buffered;
 mod sync_archive;
 
 pub use archive::Archive;
-pub use buffered::BufferedArchive;
 pub use sync_archive::SyncArchive;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArchiveError {
-    #[error("io: {0}")] Io(#[from] std::io::Error),
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
     #[error("full")]
     Full,
-    #[error("invalid seq: {0}")] InvalidSequence(u64),
+    #[error("invalid seq: {0}")]
+    InvalidSequence(u64),
     #[error("corrupted")]
     Corrupted,
     #[error("invalid magic")]

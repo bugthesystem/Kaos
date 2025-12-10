@@ -1,7 +1,7 @@
 //! Archive benchmarks
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
-use kaos_archive::{Archive, BufferedArchive, SyncArchive};
+use kaos_archive::{Archive, SyncArchive};
 use tempfile::tempdir;
 
 fn bench_append(c: &mut Criterion) {
@@ -126,19 +126,6 @@ fn bench_throughput(c: &mut Criterion) {
                 }
             }
             archive.flush();
-        });
-    });
-
-    // Buffered file (no mmap)
-    group.bench_function("buffered-1M-64B", |b| {
-        b.iter(|| {
-            let dir = tempdir().unwrap();
-            let path = dir.path().join("bench");
-            let mut archive = BufferedArchive::create(&path).unwrap();
-            for _ in 0..1_000_000 {
-                black_box(archive.append(&msg).unwrap());
-            }
-            archive.flush().unwrap();
         });
     });
 
