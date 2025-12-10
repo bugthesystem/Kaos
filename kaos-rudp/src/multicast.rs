@@ -216,6 +216,29 @@ impl MulticastTransport {
     }
 }
 
+// Trait implementations for composability
+use crate::transport::{BatchTransport, Transport};
+
+impl Transport for MulticastTransport {
+    fn send(&mut self, data: &[u8]) -> io::Result<u64> {
+        MulticastTransport::send(self, data)?;
+        // Multicast doesn't track sequences - return consumer position
+        Ok(self.consumer_seq)
+    }
+
+    fn receive<F: FnMut(&[u8])>(&mut self, handler: F) -> usize {
+        let count = MulticastTransport::receive_batch(self, 64, handler);
+        self.consumer_seq += count as u64;
+        count
+    }
+}
+
+impl BatchTransport for MulticastTransport {
+    fn send_batch(&mut self, data: &[&[u8]]) -> io::Result<usize> {
+        MulticastTransport::send_batch(self, data)
+    }
+}
+
 impl Drop for MulticastTransport {
     fn drop(&mut self) {
         let _ = self

@@ -4,25 +4,21 @@
 //!
 //! ## Features
 //!
-//! - **Fast**: 3M+ messages/sec on localhost (faster than Aeron UDP)
+//! - **Composable**: Trait-based layers - combine reliability, archiving, multicast
+//! - **Fast**: 3M+ messages/sec on localhost
 //! - **Reliable**: NAK-based retransmission for loss recovery
 //! - **Minimal allocations**: Pre-allocated buffers in hot path
-//! - **Flexible**: Multiple header formats (FastHeader for speed, full header for reliability)
 //!
-//! ## Quick Start
+//! ## Transport Trait
 //!
-//! ```rust,no_run
-//! use kaos_rudp::ReliableUdpRingBufferTransport;
+//! All transports implement `Transport` trait for composability:
 //!
-//! // Server
-//! let server_addr = "127.0.0.1:9000".parse().unwrap();
-//! let client_addr = "127.0.0.1:9001".parse().unwrap();
-//! let mut server = ReliableUdpRingBufferTransport::new(server_addr, client_addr, 65536).unwrap();
+//! ```rust,ignore
+//! use kaos_rudp::{Transport, ReliableUdpRingBufferTransport};
 //!
-//! // Receive messages
-//! server.receive_batch_with(64, |msg| {
-//!     println!("Received: {} bytes", msg.len());
-//! });
+//! fn send_messages<T: Transport>(transport: &mut T) {
+//!     transport.send(b"hello").unwrap();
+//! }
 //! ```
 //!
 //! ## Protocol
@@ -58,6 +54,8 @@ thread_local! {
     static RECV_LENS: RefCell<Vec<usize>> = RefCell::new(vec![0usize; RECV_BATCH_SIZE]);
 }
 
+mod transport;
+
 #[cfg(feature = "archive")]
 pub mod archived;
 pub mod congestion;
@@ -66,6 +64,9 @@ pub mod driver;
 pub mod multicast;
 mod sendmmsg;
 mod window;
+
+// Core trait - all transports implement this
+pub use transport::{Archived, BatchTransport, Reliable, Transport};
 
 #[cfg(feature = "archive")]
 pub use archived::{ArchivedError, ArchivedTransport};
@@ -862,5 +863,38 @@ impl ReliableUdpRingBufferTransport {
     /// Get remote address
     pub fn remote_addr(&self) -> SocketAddr {
         self.remote_addr
+    }
+}
+
+// Trait implementations for composability
+impl Transport for ReliableUdpRingBufferTransport {
+    fn send(&mut self, data: &[u8]) -> std::io::Result<u64> {
+        ReliableUdpRingBufferTransport::send(self, data)
+    }
+
+    fn receive<F: FnMut(&[u8])>(&mut self, mut handler: F) -> usize {
+        let mut count = 0;
+        ReliableUdpRingBufferTransport::receive_batch_with(self, 64, |msg| {
+            handler(msg);
+            count += 1;
+        });
+        count
+    }
+}
+
+impl BatchTransport for ReliableUdpRingBufferTransport {
+    fn send_batch(&mut self, data: &[&[u8]]) -> std::io::Result<usize> {
+        ReliableUdpRingBufferTransport::send_batch(self, data)
+    }
+}
+
+impl Reliable for ReliableUdpRingBufferTransport {
+    fn retransmit_pending(&mut self) -> std::io::Result<usize> {
+        // NAK-based: retransmission triggered by receive
+        Ok(0)
+    }
+
+    fn acked_sequence(&self) -> u64 {
+        self.acked_seq
     }
 }

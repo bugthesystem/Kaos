@@ -315,6 +315,58 @@ impl ArchivedTransport {
     }
 }
 
+// Trait implementations for composability
+use crate::transport::{Archived, BatchTransport, Reliable, Transport};
+
+impl Transport for ArchivedTransport {
+    fn send(&mut self, data: &[u8]) -> io::Result<u64> {
+        self.send(data).map_err(|e| match e {
+            ArchivedError::Io(e) => e,
+            ArchivedError::Archive(e) => io::Error::other(format!("{}", e)),
+            ArchivedError::BufferFull => io::Error::new(io::ErrorKind::WouldBlock, "buffer full"),
+        })
+    }
+
+    fn receive<F: FnMut(&[u8])>(&mut self, handler: F) -> usize {
+        self.inner.receive_batch_with(64, handler);
+        1
+    }
+
+    fn flush(&mut self) {
+        self.wait_for_archive();
+    }
+}
+
+impl BatchTransport for ArchivedTransport {
+    fn send_batch(&mut self, data: &[&[u8]]) -> io::Result<usize> {
+        ArchivedTransport::send_batch(self, data).map_err(|e| match e {
+            ArchivedError::Io(e) => e,
+            ArchivedError::Archive(e) => io::Error::other(format!("{}", e)),
+            ArchivedError::BufferFull => io::Error::new(io::ErrorKind::WouldBlock, "buffer full"),
+        })
+    }
+}
+
+impl Reliable for ArchivedTransport {
+    fn retransmit_pending(&mut self) -> io::Result<usize> {
+        Ok(0)
+    }
+
+    fn acked_sequence(&self) -> u64 {
+        self.inner.acked_seq
+    }
+}
+
+impl Archived for ArchivedTransport {
+    fn archived_count(&self) -> u64 {
+        self.archived_seq.load(Ordering::Acquire)
+    }
+
+    fn wait_for_archive(&self) {
+        ArchivedTransport::wait_for_archive(self);
+    }
+}
+
 impl Drop for ArchivedTransport {
     fn drop(&mut self) {
         self.running.store(false, Ordering::Release);
