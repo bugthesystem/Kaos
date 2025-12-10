@@ -127,6 +127,21 @@ fn bench_throughput(c: &mut Criterion) {
         });
     });
 
+    // Async archive (IPC + background writer)
+    group.bench_function("1M-appends-64B-async", |b| {
+        b.iter(|| {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("bench");
+            let archive = kaos_archive::AsyncArchive::new(&path, 1024 * 1024 * 1024).unwrap();
+            for _ in 0..1_000_000 {
+                while archive.append(&msg).is_err() {
+                    std::hint::spin_loop();
+                }
+            }
+            archive.flush();
+        });
+    });
+
     group.finish();
 }
 

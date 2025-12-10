@@ -8,6 +8,9 @@
 //! let msg = archive.read(seq).unwrap();
 //! ```
 
+mod async_archive;
+pub use async_archive::AsyncArchive;
+
 use kaos::crc32::crc32_simd;
 use memmap2::{ MmapMut, MmapOptions };
 use std::fs::{ File, OpenOptions };
@@ -233,7 +236,7 @@ impl Archive {
         &mut self,
         data: &[u8],
         compute_crc: bool,
-        update_index: bool,
+        update_index: bool
     ) -> Result<u64, ArchiveError> {
         let seq = self.msg_count;
         let pos = self.write_pos;
