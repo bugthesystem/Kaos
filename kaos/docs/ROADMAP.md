@@ -21,7 +21,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      APPLICATION                            │
-│       Producer ───► Ring Buffer (2.1 G/s) ───► Consumer    │
+│       Producer ───► Ring Buffer (2.2 G/s) ───► Consumer    │
 └─────────────────────────────────────────────────────────────┘
                               │
                     Shared Memory (mmap)

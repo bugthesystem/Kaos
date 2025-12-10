@@ -9,7 +9,7 @@ High-performance message archive using memory-mapped files.
 - **CRC32 checksums** - Data integrity verification
 - **Index file** - O(1) message lookup by sequence
 
-## Performance (Apple M3)
+## Performance (Apple M1 Pro)
 
 | Operation | Size | Result |
 |-----------|------|--------|
