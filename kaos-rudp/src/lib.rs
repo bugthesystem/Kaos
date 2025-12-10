@@ -231,6 +231,10 @@ pub struct ReliableUdpRingBufferTransport {
     congestion: CongestionController,
     /// Last send timestamp for RTT measurement
     last_send_time: std::time::Instant,
+    /// Last NAK send time for backoff
+    last_nak_time: std::time::Instant,
+    /// Pending retransmits (limited queue)
+    retransmit_queue: std::collections::VecDeque<u64>,
     #[cfg(target_os = "linux")]
     batch_sender: sendmmsg::BatchSender,
     #[cfg(target_os = "linux")]
@@ -315,6 +319,8 @@ impl ReliableUdpRingBufferTransport {
             remote_nak_addr,
             congestion: CongestionController::new(64, window_size as u32),
             last_send_time: std::time::Instant::now(),
+            last_nak_time: std::time::Instant::now(),
+            retransmit_queue: std::collections::VecDeque::with_capacity(64),
             #[cfg(target_os = "linux")]
             batch_sender: sendmmsg::BatchSender::new(64),
             #[cfg(target_os = "linux")]
@@ -490,11 +496,16 @@ impl ReliableUdpRingBufferTransport {
                         }
                     }
                 }
-                self.recv_window.send_batch_naks_for_gaps(|start, end| {
-                    #[cfg(feature = "debug")]
-                    eprintln!("[RECV-GAP] Detected gap seq {}-{}, sending NAK", start, end);
-                    self.send_batch_nak(start, end);
-                });
+                // NAK backoff: don't send NAKs more than once per RTT
+                let nak_interval = std::time::Duration::from_micros(self.congestion.rtt_us().max(1000));
+                if self.last_nak_time.elapsed() >= nak_interval {
+                    self.recv_window.send_batch_naks_for_gaps(|start, end| {
+                        #[cfg(feature = "debug")]
+                        eprintln!("[RECV-GAP] Detected gap seq {}-{}, sending NAK", start, end);
+                        self.send_batch_nak(start, end);
+                    });
+                    self.last_nak_time = std::time::Instant::now();
+                }
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // No UDP data available, just fall through
@@ -515,8 +526,36 @@ impl ReliableUdpRingBufferTransport {
         found
     }
 
-    /// Retransmit lost packets (on NAK)
-    pub fn retransmit(&mut self, lost_seq: u64) {
+    /// Queue a retransmit (paced - not sent immediately)
+    pub fn queue_retransmit(&mut self, lost_seq: u64) {
+        const MAX_PENDING: usize = 64;
+        if self.retransmit_queue.len() < MAX_PENDING {
+            // Avoid duplicates
+            if !self.retransmit_queue.contains(&lost_seq) {
+                self.retransmit_queue.push_back(lost_seq);
+            }
+        }
+    }
+
+    /// Process pending retransmits (call in event loop)
+    /// Returns number of packets retransmitted
+    pub fn process_retransmits(&mut self) -> usize {
+        const MAX_PER_CALL: usize = 8; // Limit to prevent flood
+        let mut count = 0;
+        
+        while count < MAX_PER_CALL {
+            if let Some(seq) = self.retransmit_queue.pop_front() {
+                self.retransmit_now(seq);
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        count
+    }
+
+    /// Retransmit immediately (internal)
+    fn retransmit_now(&mut self, lost_seq: u64) {
         let slots = self.send_window.peek_batch(0, self.window_size);
         if let Some(slot) = slots.iter().find(|s| s.sequence() == lost_seq) {
             let pkt_data = slot.data();
@@ -525,6 +564,11 @@ impl ReliableUdpRingBufferTransport {
                 let _ = self.socket.send_to(pkt_data, self.remote_addr);
             }
         }
+    }
+
+    /// Legacy: immediate retransmit (for backward compatibility)
+    pub fn retransmit(&mut self, lost_seq: u64) {
+        self.retransmit_now(lost_seq);
     }
 
     pub fn send_batch_nak(&self, start_seq: u64, end_seq: u64) {
@@ -606,11 +650,10 @@ impl ReliableUdpRingBufferTransport {
                                 self.send_window.advance_consumer(0, acked);
                             }
                         } else if header.msg_type == (MessageType::Nak as u8) {
-                            // Handle NAK - indicates loss
+                            // Handle NAK - queue for paced retransmit
                             self.congestion.on_loss();
-                            record_retransmit();
                             let sequence = header.sequence;
-                            self.retransmit(sequence);
+                            self.queue_retransmit(sequence);
                         }
                     }
                 }
@@ -861,9 +904,14 @@ impl ReliableUdpRingBufferTransport {
                     self.send_ack(last_delivered);
                 }
 
-                self.recv_window.send_batch_naks_for_gaps(|start, end| {
-                    self.send_batch_nak(start, end);
-                });
+                // NAK backoff: limit to once per RTT
+                let nak_interval = std::time::Duration::from_micros(self.congestion.rtt_us().max(1000));
+                if self.last_nak_time.elapsed() >= nak_interval {
+                    self.recv_window.send_batch_naks_for_gaps(|start, end| {
+                        self.send_batch_nak(start, end);
+                    });
+                    self.last_nak_time = std::time::Instant::now();
+                }
             });
         });
     }
