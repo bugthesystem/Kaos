@@ -79,6 +79,7 @@ fn bench_throughput(c: &mut Criterion) {
         });
     });
 
+    // Fair comparison with Aeron: no CRC, yes index
     group.bench_function("1M-appends-64B-unchecked", |b| {
         b.iter(|| {
             let dir = tempdir().unwrap();
@@ -86,6 +87,18 @@ fn bench_throughput(c: &mut Criterion) {
             let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
             for _ in 0..1_000_000 {
                 black_box(archive.append_unchecked(&msg).unwrap());
+            }
+        });
+    });
+
+    // No CRC, no index
+    group.bench_function("1M-appends-64B-no-index", |b| {
+        b.iter(|| {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("bench");
+            let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
+            for _ in 0..1_000_000 {
+                black_box(archive.append_no_index(&msg).unwrap());
             }
         });
     });

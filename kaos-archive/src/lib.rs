@@ -9,11 +9,11 @@
 //! ```
 
 use kaos::crc32::crc32_simd;
-use memmap2::{MmapMut, MmapOptions};
-use std::fs::{File, OpenOptions};
+use memmap2::{ MmapMut, MmapOptions };
+use std::fs::{ File, OpenOptions };
 use std::io;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{ AtomicU64, Ordering };
 
 /// Log file header (64 bytes, cache-line aligned)
 #[repr(C, align(64))]
@@ -41,7 +41,7 @@ struct IndexEntry {
 /// Message frame header (8 bytes)
 #[repr(C)]
 struct FrameHeader {
-    length: u32,   // Payload length
+    length: u32, // Payload length
     checksum: u32, // CRC32 of payload
 }
 
@@ -61,12 +61,10 @@ pub struct Archive {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArchiveError {
-    #[error("io: {0}")]
-    Io(#[from] io::Error),
+    #[error("io: {0}")] Io(#[from] io::Error),
     #[error("archive full")]
     Full,
-    #[error("invalid sequence: {0}")]
-    InvalidSequence(u64),
+    #[error("invalid sequence: {0}")] InvalidSequence(u64),
     #[error("corrupted: checksum mismatch")]
     Corrupted,
     #[error("invalid magic")]
@@ -107,9 +105,7 @@ impl Archive {
         let header = unsafe { &mut *(log_mmap.as_mut_ptr() as *mut LogHeader) };
         header.magic = MAGIC;
         header.version = 1;
-        header
-            .write_pos
-            .store(HEADER_SIZE as u64, Ordering::Release);
+        header.write_pos.store(HEADER_SIZE as u64, Ordering::Release);
         header.msg_count.store(0, Ordering::Release);
 
         Ok(Self {
@@ -130,10 +126,7 @@ impl Archive {
         let index_path = base.with_extension("idx");
 
         let log_file = OpenOptions::new().read(true).write(true).open(&log_path)?;
-        let index_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&index_path)?;
+        let index_file = OpenOptions::new().read(true).write(true).open(&index_path)?;
 
         let capacity = log_file.metadata()?.len() as usize;
         let log_mmap = unsafe { MmapOptions::new().map_mut(&log_file)? };
@@ -165,8 +158,15 @@ impl Archive {
     }
 
     /// Fast append without CRC32 checksum (use when data integrity verified elsewhere).
+    /// Still maintains index for random access.
     #[inline]
     pub fn append_unchecked(&mut self, data: &[u8]) -> Result<u64, ArchiveError> {
+        self.append_with_options(data, false, true) // no CRC, yes index
+    }
+
+    /// Append without CRC or index. Faster but no random access.
+    #[inline]
+    pub fn append_no_index(&mut self, data: &[u8]) -> Result<u64, ArchiveError> {
         self.append_with_options(data, false, false)
     }
 
@@ -215,7 +215,7 @@ impl Archive {
         &mut self,
         data: &[u8],
         compute_crc: bool,
-        update_index: bool,
+        update_index: bool
     ) -> Result<u64, ArchiveError> {
         // Use local cached state (no atomic reads on hot path)
         let seq = self.msg_count;
@@ -233,20 +233,17 @@ impl Archive {
         unsafe {
             let base = self.log_mmap.as_mut_ptr().add(pos);
             // Write header
-            std::ptr::write(
-                base as *mut FrameHeader,
-                FrameHeader {
-                    length: data.len() as u32,
-                    checksum,
-                },
-            );
+            std::ptr::write(base as *mut FrameHeader, FrameHeader {
+                length: data.len() as u32,
+                checksum,
+            });
             // Write payload
             std::ptr::copy_nonoverlapping(data.as_ptr(), base.add(FRAME_HEADER_SIZE), data.len());
         }
 
         // Update index (optional)
         if update_index {
-            let idx_pos = seq as usize * std::mem::size_of::<IndexEntry>();
+            let idx_pos = (seq as usize) * std::mem::size_of::<IndexEntry>();
             if idx_pos + std::mem::size_of::<IndexEntry>() <= self.index_mmap.len() {
                 unsafe {
                     std::ptr::write(
@@ -255,7 +252,7 @@ impl Archive {
                             offset: pos as u64,
                             length: data.len() as u32,
                             _pad: 0,
-                        },
+                        }
                     );
                 }
             }
@@ -266,12 +263,10 @@ impl Archive {
         self.msg_count = seq + 1;
 
         // Periodically sync to mmap header (every 1024 messages)
-        if seq & 0x3FF == 0 {
+        if (seq & 0x3ff) == 0 {
             let header_ptr = self.log_mmap.as_mut_ptr() as *mut LogHeader;
             unsafe {
-                (*header_ptr)
-                    .write_pos
-                    .store(new_pos as u64, Ordering::Relaxed);
+                (*header_ptr).write_pos.store(new_pos as u64, Ordering::Relaxed);
                 (*header_ptr).msg_count.store(seq + 1, Ordering::Release);
             }
         }
@@ -285,7 +280,7 @@ impl Archive {
             return Err(ArchiveError::InvalidSequence(seq));
         }
 
-        let idx_pos = seq as usize * std::mem::size_of::<IndexEntry>();
+        let idx_pos = (seq as usize) * std::mem::size_of::<IndexEntry>();
         let entry = unsafe { &*(self.index_mmap.as_ptr().add(idx_pos) as *const IndexEntry) };
 
         let offset = entry.offset as usize;
@@ -316,7 +311,7 @@ impl Archive {
             return Err(ArchiveError::InvalidSequence(seq));
         }
 
-        let idx_pos = seq as usize * std::mem::size_of::<IndexEntry>();
+        let idx_pos = (seq as usize) * std::mem::size_of::<IndexEntry>();
         let entry = unsafe { &*(self.index_mmap.as_ptr().add(idx_pos) as *const IndexEntry) };
 
         let offset = entry.offset as usize;
@@ -327,8 +322,7 @@ impl Archive {
 
     /// Replay messages in range.
     pub fn replay<F>(&self, from: u64, to: u64, mut handler: F) -> Result<u64, ArchiveError>
-    where
-        F: FnMut(u64, &[u8]),
+        where F: FnMut(u64, &[u8])
     {
         let mut count = 0;
         for seq in from..to {
@@ -337,8 +331,12 @@ impl Archive {
                     handler(seq, data);
                     count += 1;
                 }
-                Err(ArchiveError::InvalidSequence(_)) => break,
-                Err(e) => return Err(e),
+                Err(ArchiveError::InvalidSequence(_)) => {
+                    break;
+                }
+                Err(e) => {
+                    return Err(e);
+                }
             }
         }
         Ok(count)
@@ -376,12 +374,8 @@ impl Archive {
     pub fn sync(&mut self) {
         let header_ptr = self.log_mmap.as_mut_ptr() as *mut LogHeader;
         unsafe {
-            (*header_ptr)
-                .write_pos
-                .store(self.write_pos as u64, Ordering::Relaxed);
-            (*header_ptr)
-                .msg_count
-                .store(self.msg_count, Ordering::Release);
+            (*header_ptr).write_pos.store(self.write_pos as u64, Ordering::Relaxed);
+            (*header_ptr).msg_count.store(self.msg_count, Ordering::Release);
         }
     }
 }
