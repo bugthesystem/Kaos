@@ -49,7 +49,7 @@ fn bench_read(c: &mut Criterion) {
                     (archive, dir, 0u64)
                 },
                 |(archive, _dir, seq)| {
-                    black_box(archive.read_unchecked(*seq % 10000).unwrap());
+                    black_box(archive.read_no_verify(*seq % 10000).unwrap());
                     *seq += 1;
                 },
                 BatchSize::SmallInput,

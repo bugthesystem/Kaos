@@ -103,16 +103,21 @@ impl SyncArchive {
         })
     }
 
+    // ─── Append (safe) ───────────────────────────────────────────────────────
+
+    /// Append with CRC32 and index (safest, slowest).
     #[inline]
     pub fn append(&mut self, data: &[u8]) -> Result<u64, ArchiveError> {
         self.append_inner(data, true, true)
     }
 
+    /// Append without CRC32 (faster, still indexed).
     #[inline]
-    pub fn append_unchecked(&mut self, data: &[u8]) -> Result<u64, ArchiveError> {
+    pub fn append_no_crc(&mut self, data: &[u8]) -> Result<u64, ArchiveError> {
         self.append_inner(data, false, true)
     }
 
+    /// Append without CRC32 or index (fastest safe).
     #[inline]
     pub fn append_no_index(&mut self, data: &[u8]) -> Result<u64, ArchiveError> {
         self.append_inner(data, false, false)
@@ -128,19 +133,7 @@ impl SyncArchive {
             return Err(ArchiveError::Full);
         }
 
-        unsafe {
-            let base = self.log_base.add(pos);
-            let checksum = if crc { crc32_simd(data) } else { 0 };
-            std::ptr::write_unaligned(base as *mut u32, data.len() as u32);
-            std::ptr::write_unaligned(base.add(4) as *mut u32, checksum);
-            std::ptr::copy_nonoverlapping(data.as_ptr(), base.add(FRAME_HEADER_SIZE), data.len());
-
-            if index && (seq as usize) * 16 + 16 <= self.idx_len {
-                let idx_ptr = self.idx_base.add((seq as usize) << 4);
-                std::ptr::write_unaligned(idx_ptr as *mut u64, pos as u64);
-                std::ptr::write_unaligned(idx_ptr.add(8) as *mut u32, data.len() as u32);
-            }
-        }
+        unsafe { self.write_frame(pos, seq, data, crc, index); }
 
         self.write_pos = new_pos;
         self.msg_count = seq + 1;
@@ -152,6 +145,44 @@ impl SyncArchive {
         Ok(seq)
     }
 
+    // ─── Append (unsafe) ─────────────────────────────────────────────────────
+
+    /// Append without bounds check. Caller must ensure capacity.
+    /// # Safety
+    /// - `write_pos + 8 + data.len()` must not exceed capacity
+    #[inline(always)]
+    pub unsafe fn append_unchecked(&mut self, data: &[u8]) -> u64 {
+        let seq = self.msg_count;
+        let pos = self.write_pos;
+
+        self.write_frame(pos, seq, data, false, false);
+
+        self.write_pos = pos + FRAME_HEADER_SIZE + data.len();
+        self.msg_count = seq + 1;
+        seq
+    }
+
+    #[inline(always)]
+    unsafe fn write_frame(&mut self, pos: usize, seq: u64, data: &[u8], crc: bool, index: bool) {
+        let base = self.log_base.add(pos);
+        let checksum = if crc { crc32_simd(data) } else { 0 };
+        std::ptr::write_unaligned(base as *mut u32, data.len() as u32);
+        std::ptr::write_unaligned(base.add(4) as *mut u32, checksum);
+        std::ptr::copy_nonoverlapping(data.as_ptr(), base.add(FRAME_HEADER_SIZE), data.len());
+
+        if index {
+            let idx_pos = (seq as usize) << 4;
+            if idx_pos + 16 <= self.idx_len {
+                let idx_ptr = self.idx_base.add(idx_pos);
+                std::ptr::write_unaligned(idx_ptr as *mut u64, pos as u64);
+                std::ptr::write_unaligned(idx_ptr.add(8) as *mut u32, data.len() as u32);
+            }
+        }
+    }
+
+    // ─── Read (safe) ─────────────────────────────────────────────────────────
+
+    /// Read with CRC32 verification.
     pub fn read(&self, seq: u64) -> Result<&[u8], ArchiveError> {
         if seq >= self.msg_count {
             return Err(ArchiveError::InvalidSequence(seq));
@@ -170,7 +201,8 @@ impl SyncArchive {
         Ok(data)
     }
 
-    pub fn read_unchecked(&self, seq: u64) -> Result<&[u8], ArchiveError> {
+    /// Read without CRC32 verification (faster).
+    pub fn read_no_verify(&self, seq: u64) -> Result<&[u8], ArchiveError> {
         if seq >= self.msg_count {
             return Err(ArchiveError::InvalidSequence(seq));
         }
@@ -179,6 +211,20 @@ impl SyncArchive {
         let offset = entry.offset as usize;
         Ok(&self.log_mmap[offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + entry.length as usize])
     }
+
+    // ─── Read (unsafe) ───────────────────────────────────────────────────────
+
+    /// Read without bounds check. Caller must ensure seq < msg_count.
+    /// # Safety
+    /// - `seq` must be a valid sequence number
+    #[inline(always)]
+    pub unsafe fn read_unchecked(&self, seq: u64) -> &[u8] {
+        let entry = &*(self.index_mmap.as_ptr().add((seq as usize) * 16) as *const IndexEntry);
+        let offset = entry.offset as usize;
+        &self.log_mmap[offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + entry.length as usize]
+    }
+
+    // ─── Utility ─────────────────────────────────────────────────────────────
 
     pub fn len(&self) -> u64 { self.msg_count }
     pub fn is_empty(&self) -> bool { self.msg_count == 0 }
@@ -211,7 +257,19 @@ mod tests {
     fn test_sync_archive() {
         let dir = tempdir().unwrap();
         let mut archive = SyncArchive::create(dir.path().join("test"), 1024 * 1024).unwrap();
+        
+        // Safe API with CRC
         let seq = archive.append(b"hello").unwrap();
         assert_eq!(archive.read(seq).unwrap(), b"hello");
+        
+        // Safe API without CRC
+        let seq2 = archive.append_no_crc(b"world").unwrap();
+        assert_eq!(archive.read_no_verify(seq2).unwrap(), b"world");
+        
+        // Unsafe read (seq must be valid)
+        unsafe {
+            assert_eq!(archive.read_unchecked(seq), b"hello");
+            assert_eq!(archive.read_unchecked(seq2), b"world");
+        }
     }
 }
