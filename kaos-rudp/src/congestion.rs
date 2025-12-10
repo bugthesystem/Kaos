@@ -123,4 +123,69 @@ mod tests {
         cc.on_loss();
         assert!(cc.window < before);
     }
+
+    #[test]
+    fn test_window_grows_on_ack() {
+        let mut cc = CongestionController::new(10, 1000);
+        let initial = cc.window;
+
+        // Simulate 100 ACKs
+        for _ in 0..100 {
+            cc.on_ack();
+        }
+
+        // Window must have grown
+        assert!(
+            cc.window > initial,
+            "Window should grow: {} > {}",
+            cc.window,
+            initial
+        );
+    }
+
+    #[test]
+    fn test_window_bounded_by_max() {
+        let mut cc = CongestionController::new(10, 20);
+
+        // Many ACKs
+        for _ in 0..1000 {
+            cc.on_ack();
+        }
+
+        // Should not exceed max
+        assert!(cc.window <= 20, "Window {} > max 20", cc.window);
+    }
+
+    #[test]
+    fn test_rtt_update() {
+        let mut cc = CongestionController::new(10, 100);
+        let initial_rtt = cc.rtt_us();
+
+        // Update with samples
+        cc.update_rtt(5000); // 5ms
+        cc.update_rtt(5000);
+        cc.update_rtt(5000);
+
+        // RTT should move toward 5000
+        assert!(
+            cc.rtt_us() > initial_rtt,
+            "RTT should increase toward sample"
+        );
+    }
+
+    #[test]
+    fn test_can_send_respects_window() {
+        let mut cc = CongestionController::new(2, 10);
+
+        assert!(cc.can_send());
+        cc.on_send();
+        assert!(cc.can_send());
+        cc.on_send();
+        // Window is 2, in_flight is 2
+        assert!(!cc.can_send(), "Should not send when window full");
+
+        // ACK releases one
+        cc.on_ack();
+        assert!(cc.can_send());
+    }
 }

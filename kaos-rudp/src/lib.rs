@@ -229,6 +229,8 @@ pub struct ReliableUdpRingBufferTransport {
     remote_addr: SocketAddr,
     remote_nak_addr: SocketAddr,
     congestion: CongestionController,
+    /// Last send timestamp for RTT measurement
+    last_send_time: std::time::Instant,
     #[cfg(target_os = "linux")]
     batch_sender: sendmmsg::BatchSender,
     #[cfg(target_os = "linux")]
@@ -312,6 +314,7 @@ impl ReliableUdpRingBufferTransport {
             remote_addr,
             remote_nak_addr,
             congestion: CongestionController::new(64, window_size as u32),
+            last_send_time: std::time::Instant::now(),
             #[cfg(target_os = "linux")]
             batch_sender: sendmmsg::BatchSender::new(64),
             #[cfg(target_os = "linux")]
@@ -373,6 +376,7 @@ impl ReliableUdpRingBufferTransport {
 
                     self.socket.send_to(&buffer, self.remote_addr)?;
                     self.congestion.on_send();
+                    self.last_send_time = std::time::Instant::now();
                     record_send(buffer.len() as u64);
                     self.next_send_seq = self.next_send_seq.wrapping_add(1);
                     Ok(seq)
@@ -393,6 +397,7 @@ impl ReliableUdpRingBufferTransport {
 
             self.socket.send_to(packet, self.remote_addr)?;
             self.congestion.on_send();
+            self.last_send_time = std::time::Instant::now();
             record_send(packet.len() as u64);
             self.next_send_seq = self.next_send_seq.wrapping_add(1);
             Ok(seq)
@@ -577,13 +582,26 @@ impl ReliableUdpRingBufferTransport {
                         if header.msg_type == (MessageType::Ack as u8) {
                             let acked = header.sequence;
                             if acked > self.acked_seq {
+                                // Count newly acknowledged packets
+                                let newly_acked = acked.saturating_sub(self.acked_seq);
+                                
                                 #[cfg(feature = "debug")]
                                 eprintln!(
-                                    "[ACK-RECV] Received ACK for seq {}, advancing window",
-                                    acked
+                                    "[ACK-RECV] ACK seq {}, {} packets acked",
+                                    acked, newly_acked
                                 );
-                                // Congestion control: ACK received
-                                self.congestion.on_ack();
+                                
+                                // Call on_ack() for EACH acked packet
+                                for _ in 0..newly_acked {
+                                    self.congestion.on_ack();
+                                }
+                                
+                                // Measure RTT (approximate: time since last send)
+                                let rtt_us = self.last_send_time.elapsed().as_micros() as u64;
+                                if rtt_us > 0 && rtt_us < 1_000_000 {
+                                    self.congestion.update_rtt(rtt_us);
+                                }
+                                
                                 self.acked_seq = acked;
                                 self.send_window.advance_consumer(0, acked);
                             }
