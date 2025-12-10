@@ -54,6 +54,9 @@ pub struct Archive {
     _log_file: File,
     _index_file: File,
     capacity: usize,
+    // Local state cache (avoid atomic reads on hot path)
+    write_pos: usize,
+    msg_count: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -115,6 +118,8 @@ impl Archive {
             _log_file: log_file,
             _index_file: index_file,
             capacity,
+            write_pos: HEADER_SIZE,
+            msg_count: 0,
         })
     }
 
@@ -134,11 +139,13 @@ impl Archive {
         let log_mmap = unsafe { MmapOptions::new().map_mut(&log_file)? };
         let index_mmap = unsafe { MmapOptions::new().map_mut(&index_file)? };
 
-        // Verify magic
+        // Verify magic and read state
         let header = unsafe { &*(log_mmap.as_ptr() as *const LogHeader) };
         if header.magic != MAGIC {
             return Err(ArchiveError::InvalidMagic);
         }
+        let write_pos = header.write_pos.load(Ordering::Relaxed) as usize;
+        let msg_count = header.msg_count.load(Ordering::Relaxed);
 
         Ok(Self {
             log_mmap,
@@ -146,15 +153,34 @@ impl Archive {
             _log_file: log_file,
             _index_file: index_file,
             capacity,
+            write_pos,
+            msg_count,
         })
     }
 
     /// Append a message. Returns sequence number.
+    #[inline]
     pub fn append(&mut self, data: &[u8]) -> Result<u64, ArchiveError> {
-        // Read current state
-        let header_ptr = self.log_mmap.as_ptr() as *const LogHeader;
-        let seq = unsafe { (*header_ptr).msg_count.load(Ordering::Acquire) };
-        let pos = unsafe { (*header_ptr).write_pos.load(Ordering::Acquire) } as usize;
+        self.append_with_options(data, true, true)
+    }
+
+    /// Fast append without CRC32 checksum (use when data integrity verified elsewhere).
+    #[inline]
+    pub fn append_unchecked(&mut self, data: &[u8]) -> Result<u64, ArchiveError> {
+        self.append_with_options(data, false, false)
+    }
+
+    /// Append with configurable options.
+    #[inline(always)]
+    fn append_with_options(
+        &mut self,
+        data: &[u8],
+        compute_crc: bool,
+        update_index: bool,
+    ) -> Result<u64, ArchiveError> {
+        // Use local cached state (no atomic reads on hot path)
+        let seq = self.msg_count;
+        let pos = self.write_pos;
 
         let frame_size = FRAME_HEADER_SIZE + data.len();
         let new_pos = pos + frame_size;
@@ -163,44 +189,52 @@ impl Archive {
             return Err(ArchiveError::Full);
         }
 
-        // Write frame header
-        let frame = FrameHeader {
-            length: data.len() as u32,
-            checksum: crc32_simd(data),
-        };
-        let frame_bytes = unsafe {
-            std::slice::from_raw_parts(&frame as *const FrameHeader as *const u8, FRAME_HEADER_SIZE)
-        };
-        self.log_mmap[pos..pos + FRAME_HEADER_SIZE].copy_from_slice(frame_bytes);
-
-        // Write payload
-        self.log_mmap[pos + FRAME_HEADER_SIZE..new_pos].copy_from_slice(data);
-
-        // Update index
-        let index_entry = IndexEntry {
-            offset: pos as u64,
-            length: data.len() as u32,
-            _pad: 0,
-        };
-        let idx_pos = seq as usize * std::mem::size_of::<IndexEntry>();
-        let entry_bytes = unsafe {
-            std::slice::from_raw_parts(
-                &index_entry as *const IndexEntry as *const u8,
-                std::mem::size_of::<IndexEntry>(),
-            )
-        };
-        let idx_len = self.index_mmap.len();
-        if idx_pos + entry_bytes.len() <= idx_len {
-            self.index_mmap[idx_pos..idx_pos + entry_bytes.len()].copy_from_slice(entry_bytes);
+        // Write frame header + payload in one go
+        let checksum = if compute_crc { crc32_simd(data) } else { 0 };
+        unsafe {
+            let base = self.log_mmap.as_mut_ptr().add(pos);
+            // Write header
+            std::ptr::write(
+                base as *mut FrameHeader,
+                FrameHeader {
+                    length: data.len() as u32,
+                    checksum,
+                },
+            );
+            // Write payload
+            std::ptr::copy_nonoverlapping(data.as_ptr(), base.add(FRAME_HEADER_SIZE), data.len());
         }
 
-        // Update header atomically
-        let header_ptr = self.log_mmap.as_mut_ptr() as *mut LogHeader;
-        unsafe {
-            (*header_ptr)
-                .write_pos
-                .store(new_pos as u64, Ordering::Release);
-            (*header_ptr).msg_count.store(seq + 1, Ordering::Release);
+        // Update index (optional)
+        if update_index {
+            let idx_pos = seq as usize * std::mem::size_of::<IndexEntry>();
+            if idx_pos + std::mem::size_of::<IndexEntry>() <= self.index_mmap.len() {
+                unsafe {
+                    std::ptr::write(
+                        self.index_mmap.as_mut_ptr().add(idx_pos) as *mut IndexEntry,
+                        IndexEntry {
+                            offset: pos as u64,
+                            length: data.len() as u32,
+                            _pad: 0,
+                        },
+                    );
+                }
+            }
+        }
+
+        // Update local cache
+        self.write_pos = new_pos;
+        self.msg_count = seq + 1;
+
+        // Periodically sync to mmap header (every 1024 messages)
+        if seq & 0x3FF == 0 {
+            let header_ptr = self.log_mmap.as_mut_ptr() as *mut LogHeader;
+            unsafe {
+                (*header_ptr)
+                    .write_pos
+                    .store(new_pos as u64, Ordering::Relaxed);
+                (*header_ptr).msg_count.store(seq + 1, Ordering::Release);
+            }
         }
 
         Ok(seq)
@@ -208,10 +242,7 @@ impl Archive {
 
     /// Read a message by sequence number. Zero-copy.
     pub fn read(&self, seq: u64) -> Result<&[u8], ArchiveError> {
-        let header = self.header();
-        let count = header.msg_count.load(Ordering::Acquire);
-
-        if seq >= count {
+        if seq >= self.msg_count {
             return Err(ArchiveError::InvalidSequence(seq));
         }
 
@@ -242,10 +273,7 @@ impl Archive {
 
     /// Read without checksum verification (faster).
     pub fn read_unchecked(&self, seq: u64) -> Result<&[u8], ArchiveError> {
-        let header = self.header();
-        let count = header.msg_count.load(Ordering::Acquire);
-
-        if seq >= count {
+        if seq >= self.msg_count {
             return Err(ArchiveError::InvalidSequence(seq));
         }
 
@@ -279,7 +307,7 @@ impl Archive {
 
     /// Number of messages.
     pub fn len(&self) -> u64 {
-        self.header().msg_count.load(Ordering::Acquire)
+        self.msg_count
     }
 
     /// Is archive empty?
@@ -301,6 +329,27 @@ impl Archive {
 
     fn header(&self) -> &LogHeader {
         unsafe { &*(self.log_mmap.as_ptr() as *const LogHeader) }
+    }
+}
+
+impl Archive {
+    /// Sync cached state to mmap header.
+    pub fn sync(&mut self) {
+        let header_ptr = self.log_mmap.as_mut_ptr() as *mut LogHeader;
+        unsafe {
+            (*header_ptr)
+                .write_pos
+                .store(self.write_pos as u64, Ordering::Relaxed);
+            (*header_ptr)
+                .msg_count
+                .store(self.msg_count, Ordering::Release);
+        }
+    }
+}
+
+impl Drop for Archive {
+    fn drop(&mut self) {
+        self.sync();
     }
 }
 
