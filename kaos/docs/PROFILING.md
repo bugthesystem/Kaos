@@ -165,9 +165,23 @@ cargo install cargo-asm
 cd kaos && cargo asm --lib "kaos::disruptor::completion::CompletionTracker::try_claim"
 ```
 
-## Assembly Analysis (ARM64 M1 Pro)
+## Assembly Analysis
 
 Critical path assembly verified with `cargo asm`. Hot path functions are inlined.
+
+### Platform-Specific Instructions
+
+| Operation | ARM64 (M1/M2/M3/M4) | x86_64 (Linux/Intel) |
+|-----------|---------------------|----------------------|
+| Load-Acquire | `ldar` | `mov` + barrier |
+| Store-Release | `stlr` | `mov` + barrier |
+| CAS | `cas`/`casal` | `lock cmpxchg` |
+| Fetch-XOR | `ldxr`+`stxr` | `lock xor` |
+| CRC32 | `crc32cx` (hardware) | `crc32` (SSE4.2) |
+
+Rust's `std::sync::atomic` compiles to native instructions on each platform.
+
+### ARM64 (Apple Silicon)
 
 ### CompletionTracker::try_claim (SPMC/MPMC consumer claim)
 

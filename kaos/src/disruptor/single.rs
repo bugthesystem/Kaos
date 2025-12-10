@@ -23,15 +23,22 @@ use std::sync::Arc;
 struct PaddedAtomicU64(AtomicU64);
 
 impl PaddedAtomicU64 {
+    #[inline]
     fn new(v: u64) -> Self {
         Self(AtomicU64::new(v))
     }
+
+    #[inline]
     fn load(&self, order: Ordering) -> u64 {
         self.0.load(order)
     }
+
+    #[inline]
     fn store(&self, v: u64, order: Ordering) {
         self.0.store(v, order)
     }
+
+    #[inline]
     fn compare_exchange_weak(
         &self,
         current: u64,
