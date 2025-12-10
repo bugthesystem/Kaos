@@ -287,7 +287,23 @@ impl<T: RingBufferEntry> RingBuffer<T> {
         unsafe { std::slice::from_raw_parts(self.buffer.add(start_idx), actual) }
     }
 
-    /// Write a value to a slot.
+    /// Write a value to a slot (safe, with bounds checking).
+    ///
+    /// Returns `Some(())` if successful, `None` if sequence is out of bounds.
+    #[inline]
+    pub fn write_slot(&self, sequence: u64, value: T) -> Option<()> {
+        let idx = (sequence as usize) & self.mask;
+        if idx >= self.size {
+            return None;
+        }
+        // SAFETY: bounds checked above
+        unsafe {
+            std::ptr::write_volatile(self.buffer.add(idx), value);
+        }
+        Some(())
+    }
+
+    /// Write a value to a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -296,12 +312,12 @@ impl<T: RingBufferEntry> RingBuffer<T> {
     /// - The slot must be published after writing via `publish()`.
     #[cfg(feature = "unsafe-perf")]
     #[inline(always)]
-    pub unsafe fn write_slot(&self, sequence: u64, value: T) {
+    pub unsafe fn write_slot_unchecked(&self, sequence: u64, value: T) {
         let idx = (sequence as usize) & self.mask;
         std::ptr::write_volatile(self.buffer.add(idx), value);
     }
 
-    /// Write a value to a slot.
+    /// Write a value to a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -310,11 +326,11 @@ impl<T: RingBufferEntry> RingBuffer<T> {
     /// - The slot must be published after writing via `publish()`.
     #[cfg(not(feature = "unsafe-perf"))]
     #[inline(always)]
-    pub unsafe fn write_slot(&self, sequence: u64, value: T) {
+    pub unsafe fn write_slot_unchecked(&self, sequence: u64, value: T) {
         let idx = (sequence as usize) & self.mask;
         debug_assert!(
             idx < self.size,
-            "write_slot: idx {} >= size {}",
+            "write_slot_unchecked: idx {} >= size {}",
             idx,
             self.size
         );
@@ -326,7 +342,20 @@ impl<T: RingBufferEntry> RingBuffer<T> {
         self.producer_cursor.store(sequence, Ordering::Relaxed);
     }
 
-    /// Read a value from a slot.
+    /// Read a value from a slot (safe, with bounds checking).
+    ///
+    /// Returns `Some(value)` if successful, `None` if sequence is out of bounds.
+    #[inline]
+    pub fn read_slot(&self, sequence: u64) -> Option<T> {
+        let idx = (sequence as usize) & self.mask;
+        if idx >= self.size {
+            return None;
+        }
+        // SAFETY: bounds checked above
+        Some(unsafe { std::ptr::read_volatile(self.buffer.add(idx)) })
+    }
+
+    /// Read a value from a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -335,12 +364,12 @@ impl<T: RingBufferEntry> RingBuffer<T> {
     /// - Call `update_consumer()` after processing to advance the consumer cursor.
     #[cfg(feature = "unsafe-perf")]
     #[inline(always)]
-    pub unsafe fn read_slot(&self, sequence: u64) -> T {
+    pub unsafe fn read_slot_unchecked(&self, sequence: u64) -> T {
         let idx = (sequence as usize) & self.mask;
         std::ptr::read_volatile(self.buffer.add(idx))
     }
 
-    /// Read a value from a slot.
+    /// Read a value from a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -349,11 +378,11 @@ impl<T: RingBufferEntry> RingBuffer<T> {
     /// - Call `update_consumer()` after processing to advance the consumer cursor.
     #[cfg(not(feature = "unsafe-perf"))]
     #[inline(always)]
-    pub unsafe fn read_slot(&self, sequence: u64) -> T {
+    pub unsafe fn read_slot_unchecked(&self, sequence: u64) -> T {
         let idx = (sequence as usize) & self.mask;
         debug_assert!(
             idx < self.size,
-            "read_slot: idx {} >= size {}",
+            "read_slot_unchecked: idx {} >= size {}",
             idx,
             self.size
         );
@@ -988,17 +1017,34 @@ mod tests {
     fn test_spsc_write_read() {
         let mut ring = RingBuffer::<Slot8>::new(1024).unwrap();
         if let Some(next) = ring.try_claim(3, 0) {
+            // Test safe versions
+            ring.write_slot(0, Slot8 { value: 1 }).unwrap();
+            ring.write_slot(1, Slot8 { value: 2 }).unwrap();
+            ring.write_slot(2, Slot8 { value: 3 }).unwrap();
+            ring.publish(next);
+            std::sync::atomic::fence(Ordering::Acquire);
+            assert_eq!(ring.read_slot(0).unwrap().value, 1);
+            assert_eq!(ring.read_slot(1).unwrap().value, 2);
+            assert_eq!(ring.read_slot(2).unwrap().value, 3);
+        }
+    }
+
+    #[test]
+    fn test_spsc_write_read_unchecked() {
+        let mut ring = RingBuffer::<Slot8>::new(1024).unwrap();
+        if let Some(next) = ring.try_claim(3, 0) {
+            // Test unchecked versions (for performance-critical code)
             unsafe {
-                ring.write_slot(0, Slot8 { value: 1 });
-                ring.write_slot(1, Slot8 { value: 2 });
-                ring.write_slot(2, Slot8 { value: 3 });
+                ring.write_slot_unchecked(0, Slot8 { value: 10 });
+                ring.write_slot_unchecked(1, Slot8 { value: 20 });
+                ring.write_slot_unchecked(2, Slot8 { value: 30 });
             }
             ring.publish(next);
             std::sync::atomic::fence(Ordering::Acquire);
             unsafe {
-                assert_eq!(ring.read_slot(0).value, 1);
-                assert_eq!(ring.read_slot(1).value, 2);
-                assert_eq!(ring.read_slot(2).value, 3);
+                assert_eq!(ring.read_slot_unchecked(0).value, 10);
+                assert_eq!(ring.read_slot_unchecked(1).value, 20);
+                assert_eq!(ring.read_slot_unchecked(2).value, 30);
             }
         }
     }

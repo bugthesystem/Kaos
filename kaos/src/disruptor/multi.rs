@@ -87,6 +87,24 @@ impl<T: RingBufferEntry> MpscRingBuffer<T> {
 
     /// Write a value to a slot.
     ///
+    /// Write a value to a slot (safe, with bounds checking).
+    ///
+    /// Returns `Some(())` if successful, `None` if sequence is out of bounds.
+    #[inline]
+    pub fn write_slot(&self, sequence: u64, value: T) -> Option<()> {
+        let idx = (sequence as usize) & self.mask;
+        if idx >= self.buffer.len() {
+            return None;
+        }
+        // SAFETY: bounds checked above
+        unsafe {
+            std::ptr::write_volatile(self.buffer.as_ptr().add(idx) as *mut T, value);
+        }
+        Some(())
+    }
+
+    /// Write a value to a slot (unchecked, no bounds checking).
+    ///
     /// # Safety
     ///
     /// - The sequence must have been claimed via `try_claim`.
@@ -94,12 +112,12 @@ impl<T: RingBufferEntry> MpscRingBuffer<T> {
     /// - The slot must be published after writing via `publish()`.
     #[cfg(feature = "unsafe-perf")]
     #[inline(always)]
-    pub unsafe fn write_slot(&self, sequence: u64, value: T) {
+    pub unsafe fn write_slot_unchecked(&self, sequence: u64, value: T) {
         let idx = (sequence as usize) & self.mask;
         std::ptr::write_volatile(self.buffer.as_ptr().add(idx) as *mut T, value);
     }
 
-    /// Write a value to a slot.
+    /// Write a value to a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -108,11 +126,11 @@ impl<T: RingBufferEntry> MpscRingBuffer<T> {
     /// - The slot must be published after writing via `publish()`.
     #[cfg(not(feature = "unsafe-perf"))]
     #[inline(always)]
-    pub unsafe fn write_slot(&self, sequence: u64, value: T) {
+    pub unsafe fn write_slot_unchecked(&self, sequence: u64, value: T) {
         let idx = (sequence as usize) & self.mask;
         debug_assert!(
             idx < self.buffer.len(),
-            "MpscRingBuffer::write_slot: idx {} >= len {}",
+            "MpscRingBuffer::write_slot_unchecked: idx {} >= len {}",
             idx,
             self.buffer.len()
         );
@@ -166,7 +184,20 @@ impl<T: RingBufferEntry> MpscRingBuffer<T> {
         }
     }
 
-    /// Read a value from a slot.
+    /// Read a value from a slot (safe, with bounds checking).
+    ///
+    /// Returns `Some(value)` if successful, `None` if sequence is out of bounds.
+    #[inline]
+    pub fn read_slot(&self, sequence: u64) -> Option<T> {
+        let idx = (sequence as usize) & self.mask;
+        if idx >= self.buffer.len() {
+            return None;
+        }
+        // SAFETY: bounds checked above
+        Some(unsafe { std::ptr::read_volatile(self.buffer.as_ptr().add(idx)) })
+    }
+
+    /// Read a value from a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -175,12 +206,12 @@ impl<T: RingBufferEntry> MpscRingBuffer<T> {
     /// - Call `update_consumer()` after processing to advance the consumer cursor.
     #[cfg(feature = "unsafe-perf")]
     #[inline(always)]
-    pub unsafe fn read_slot(&self, sequence: u64) -> T {
+    pub unsafe fn read_slot_unchecked(&self, sequence: u64) -> T {
         let idx = (sequence as usize) & self.mask;
         std::ptr::read_volatile(self.buffer.as_ptr().add(idx))
     }
 
-    /// Read a value from a slot.
+    /// Read a value from a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -189,11 +220,11 @@ impl<T: RingBufferEntry> MpscRingBuffer<T> {
     /// - Call `update_consumer()` after processing to advance the consumer cursor.
     #[cfg(not(feature = "unsafe-perf"))]
     #[inline(always)]
-    pub unsafe fn read_slot(&self, sequence: u64) -> T {
+    pub unsafe fn read_slot_unchecked(&self, sequence: u64) -> T {
         let idx = (sequence as usize) & self.mask;
         debug_assert!(
             idx < self.buffer.len(),
-            "MpscRingBuffer::read_slot: idx {} >= len {}",
+            "MpscRingBuffer::read_slot_unchecked: idx {} >= len {}",
             idx,
             self.buffer.len()
         );
@@ -270,8 +301,9 @@ impl<T: RingBufferEntry> MpscProducer<T> {
         if let Some(seq) = self.ring_buffer.try_claim(1) {
             let mut value = T::default();
             writer(&mut value);
+            // SAFETY: sequence was just claimed, so it's valid
             unsafe {
-                self.ring_buffer.write_slot(seq, value);
+                self.ring_buffer.write_slot_unchecked(seq, value);
             }
             self.ring_buffer.publish(seq);
             Ok(())
@@ -295,8 +327,9 @@ impl<T: RingBufferEntry> MpscProducer<T> {
                 let seq = start_seq + (i as u64);
                 let mut value = T::default();
                 writer(i, &mut value);
+                // SAFETY: sequence was just claimed, so it's valid
                 unsafe {
-                    self.ring_buffer.write_slot(seq, value);
+                    self.ring_buffer.write_slot_unchecked(seq, value);
                 }
             }
             // Single batch publish - much faster than N individual publishes
@@ -364,8 +397,9 @@ impl<T: RingBufferEntry> MpscConsumer<T> {
         let to_consume = available.min(self.batch_size as u64) as usize;
         for i in 0..to_consume {
             let seq = self.cursor + (i as u64);
+            // SAFETY: sequence is within published range
             unsafe {
-                let event = self.ring_buffer.read_slot(seq);
+                let event = self.ring_buffer.read_slot_unchecked(seq);
                 handler.on_event(&event, seq, i == to_consume - 1);
             }
         }
@@ -446,7 +480,23 @@ impl<T: RingBufferEntry> SpmcRingBuffer<T> {
         }
     }
 
-    /// Write a value to a slot (SPMC: single producer writes).
+    /// Write a value to a slot (safe, with bounds checking).
+    ///
+    /// Returns `Some(())` if successful, `None` if sequence is out of bounds.
+    #[inline]
+    pub fn write_slot(&self, sequence: u64, value: T) -> Option<()> {
+        let idx = (sequence as usize) & self.mask;
+        if idx >= self.buffer.len() {
+            return None;
+        }
+        // SAFETY: bounds checked above
+        unsafe {
+            std::ptr::write_volatile(self.buffer.as_ptr().add(idx) as *mut T, value);
+        }
+        Some(())
+    }
+
+    /// Write a value to a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -455,12 +505,12 @@ impl<T: RingBufferEntry> SpmcRingBuffer<T> {
     /// - The slot must be published after writing via `publish()`.
     #[cfg(feature = "unsafe-perf")]
     #[inline(always)]
-    pub unsafe fn write_slot(&self, sequence: u64, value: T) {
+    pub unsafe fn write_slot_unchecked(&self, sequence: u64, value: T) {
         let idx = (sequence as usize) & self.mask;
         std::ptr::write_volatile(self.buffer.as_ptr().add(idx) as *mut T, value);
     }
 
-    /// Write a value to a slot (SPMC: single producer writes).
+    /// Write a value to a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -469,11 +519,11 @@ impl<T: RingBufferEntry> SpmcRingBuffer<T> {
     /// - The slot must be published after writing via `publish()`.
     #[cfg(not(feature = "unsafe-perf"))]
     #[inline(always)]
-    pub unsafe fn write_slot(&self, sequence: u64, value: T) {
+    pub unsafe fn write_slot_unchecked(&self, sequence: u64, value: T) {
         let idx = (sequence as usize) & self.mask;
         debug_assert!(
             idx < self.buffer.len(),
-            "SpmcRingBuffer::write_slot: idx {} >= len {}",
+            "SpmcRingBuffer::write_slot_unchecked: idx {} >= len {}",
             idx,
             self.buffer.len()
         );
@@ -518,7 +568,20 @@ impl<T: RingBufferEntry> SpmcRingBuffer<T> {
         }
     }
 
-    /// Read a value from a slot (SPMC: multiple consumers read).
+    /// Read a value from a slot (safe, with bounds checking).
+    ///
+    /// Returns `Some(value)` if successful, `None` if sequence is out of bounds.
+    #[inline]
+    pub fn read_slot(&self, sequence: u64) -> Option<T> {
+        let idx = (sequence as usize) & self.mask;
+        if idx >= self.buffer.len() {
+            return None;
+        }
+        // SAFETY: bounds checked above
+        Some(unsafe { std::ptr::read_volatile(self.buffer.as_ptr().add(idx)) })
+    }
+
+    /// Read a value from a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -527,12 +590,12 @@ impl<T: RingBufferEntry> SpmcRingBuffer<T> {
     /// - Call `complete_read()` after processing to mark the slot as consumed.
     #[cfg(feature = "unsafe-perf")]
     #[inline(always)]
-    pub unsafe fn read_slot(&self, sequence: u64) -> T {
+    pub unsafe fn read_slot_unchecked(&self, sequence: u64) -> T {
         let idx = (sequence as usize) & self.mask;
         std::ptr::read_volatile(self.buffer.as_ptr().add(idx))
     }
 
-    /// Read a value from a slot (SPMC: multiple consumers read).
+    /// Read a value from a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -541,11 +604,11 @@ impl<T: RingBufferEntry> SpmcRingBuffer<T> {
     /// - Call `complete_read()` after processing to mark the slot as consumed.
     #[cfg(not(feature = "unsafe-perf"))]
     #[inline(always)]
-    pub unsafe fn read_slot(&self, sequence: u64) -> T {
+    pub unsafe fn read_slot_unchecked(&self, sequence: u64) -> T {
         let idx = (sequence as usize) & self.mask;
         debug_assert!(
             idx < self.buffer.len(),
-            "SpmcRingBuffer::read_slot: idx {} >= len {}",
+            "SpmcRingBuffer::read_slot_unchecked: idx {} >= len {}",
             idx,
             self.buffer.len()
         );
@@ -689,7 +752,23 @@ impl<T: RingBufferEntry> MpmcRingBuffer<T> {
         }
     }
 
-    /// Write a value to a slot (MPMC: multiple producers write).
+    /// Write a value to a slot (safe, with bounds checking).
+    ///
+    /// Returns `Some(())` if successful, `None` if sequence is out of bounds.
+    #[inline]
+    pub fn write_slot(&self, sequence: u64, value: T) -> Option<()> {
+        let idx = (sequence as usize) & self.mask;
+        if idx >= self.buffer.len() {
+            return None;
+        }
+        // SAFETY: bounds checked above
+        unsafe {
+            std::ptr::write_volatile(self.buffer.as_ptr().add(idx) as *mut T, value);
+        }
+        Some(())
+    }
+
+    /// Write a value to a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -698,12 +777,12 @@ impl<T: RingBufferEntry> MpmcRingBuffer<T> {
     /// - The slot must be published after writing via `publish()`.
     #[cfg(feature = "unsafe-perf")]
     #[inline(always)]
-    pub unsafe fn write_slot(&self, sequence: u64, value: T) {
+    pub unsafe fn write_slot_unchecked(&self, sequence: u64, value: T) {
         let idx = (sequence as usize) & self.mask;
         std::ptr::write_volatile(self.buffer.as_ptr().add(idx) as *mut T, value);
     }
 
-    /// Write a value to a slot (MPMC: multiple producers write).
+    /// Write a value to a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -712,7 +791,7 @@ impl<T: RingBufferEntry> MpmcRingBuffer<T> {
     /// - The slot must be published after writing via `publish()`.
     #[cfg(not(feature = "unsafe-perf"))]
     #[inline(always)]
-    pub unsafe fn write_slot(&self, sequence: u64, value: T) {
+    pub unsafe fn write_slot_unchecked(&self, sequence: u64, value: T) {
         let idx = (sequence as usize) & self.mask;
         debug_assert!(idx < self.buffer.len());
         std::ptr::write_volatile(self.buffer.as_ptr().add(idx) as *mut T, value);
@@ -802,7 +881,20 @@ impl<T: RingBufferEntry> MpmcRingBuffer<T> {
         seq.min(claimed).saturating_sub(1)
     }
 
-    /// Read a value from a slot (MPMC: multiple consumers read).
+    /// Read a value from a slot (safe, with bounds checking).
+    ///
+    /// Returns `Some(value)` if successful, `None` if sequence is out of bounds.
+    #[inline]
+    pub fn read_slot(&self, sequence: u64) -> Option<T> {
+        let idx = (sequence as usize) & self.mask;
+        if idx >= self.buffer.len() {
+            return None;
+        }
+        // SAFETY: bounds checked above
+        Some(unsafe { std::ptr::read_volatile(self.buffer.as_ptr().add(idx)) })
+    }
+
+    /// Read a value from a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -811,12 +903,12 @@ impl<T: RingBufferEntry> MpmcRingBuffer<T> {
     /// - Call `update_consumer()` after processing to release the slot.
     #[cfg(feature = "unsafe-perf")]
     #[inline(always)]
-    pub unsafe fn read_slot(&self, sequence: u64) -> T {
+    pub unsafe fn read_slot_unchecked(&self, sequence: u64) -> T {
         let idx = (sequence as usize) & self.mask;
         std::ptr::read_volatile(self.buffer.as_ptr().add(idx))
     }
 
-    /// Read a value from a slot (MPMC: multiple consumers read).
+    /// Read a value from a slot (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -825,7 +917,7 @@ impl<T: RingBufferEntry> MpmcRingBuffer<T> {
     /// - Call `update_consumer()` after processing to release the slot.
     #[cfg(not(feature = "unsafe-perf"))]
     #[inline(always)]
-    pub unsafe fn read_slot(&self, sequence: u64) -> T {
+    pub unsafe fn read_slot_unchecked(&self, sequence: u64) -> T {
         let idx = (sequence as usize) & self.mask;
         debug_assert!(idx < self.buffer.len());
         std::ptr::read_volatile(self.buffer.as_ptr().add(idx))
@@ -1133,9 +1225,8 @@ mod tests {
     fn test_spmc_basic() {
         let ring = SpmcRingBuffer::<Slot8>::new(1024).unwrap();
         let next = ring.try_claim(1, 0).unwrap();
-        unsafe {
-            ring.write_slot(0, Slot8 { value: 42 });
-        }
+        // Test safe version
+        ring.write_slot(0, Slot8 { value: 42 }).unwrap();
         ring.publish(next);
 
         let guard = ring.try_read().unwrap();
@@ -1150,9 +1241,8 @@ mod tests {
         let mut cursor = 0u64;
         for i in 0..10 {
             let next = ring.try_claim(1, cursor).unwrap();
-            unsafe {
-                ring.write_slot(cursor, Slot8 { value: i + 1 });
-            }
+            // Test safe version
+            ring.write_slot(cursor, Slot8 { value: i + 1 }).unwrap();
             ring.publish(next);
             cursor = next;
         }
@@ -1167,9 +1257,8 @@ mod tests {
     fn test_mpmc_basic() {
         let ring = MpmcRingBuffer::<Slot8>::new(1024).unwrap();
         let seq = ring.try_claim(1).unwrap();
-        unsafe {
-            ring.write_slot(seq, Slot8 { value: 42 });
-        }
+        // Test safe version
+        ring.write_slot(seq, Slot8 { value: 42 }).unwrap();
         ring.publish(seq);
 
         let (_, slot) = ring.try_read().unwrap();
@@ -1182,15 +1271,27 @@ mod tests {
         let seq = ring.try_claim(64).unwrap();
 
         for i in 0..64 {
-            unsafe {
-                ring.write_slot(seq + i, Slot8 { value: i + 1 });
-            }
+            // Test safe version
+            ring.write_slot(seq + i, Slot8 { value: i + 1 }).unwrap();
         }
         ring.publish_batch(seq, 64);
 
         // Verify all published
         let published = ring.get_published_sequence();
         assert!(published >= seq + 63);
+    }
+
+    #[test]
+    fn test_write_slot_unchecked() {
+        let ring = MpmcRingBuffer::<Slot8>::new(1024).unwrap();
+        let seq = ring.try_claim(1).unwrap();
+        // Test unchecked version
+        unsafe {
+            ring.write_slot_unchecked(seq, Slot8 { value: 99 });
+        }
+        ring.publish(seq);
+        let (_, slot) = ring.try_read().unwrap();
+        assert_eq!(slot.value, 99);
     }
 
     #[test]
@@ -1236,8 +1337,9 @@ mod tests {
             for i in 1..=num_items {
                 loop {
                     if let Some(next) = ring_producer.try_claim(1, cursor) {
+                        // SAFETY: sequence was just claimed
                         unsafe {
-                            ring_producer.write_slot(cursor, Slot8 { value: i });
+                            ring_producer.write_slot_unchecked(cursor, Slot8 { value: i });
                         }
                         ring_producer.publish(next);
                         cursor = next;
@@ -1249,8 +1351,9 @@ mod tests {
             for _ in 0..num_consumers {
                 loop {
                     if let Some(next) = ring_producer.try_claim(1, cursor) {
+                        // SAFETY: sequence was just claimed
                         unsafe {
-                            ring_producer.write_slot(cursor, Slot8 { value: 0 });
+                            ring_producer.write_slot_unchecked(cursor, Slot8 { value: 0 });
                         }
                         ring_producer.publish(next);
                         cursor = next;

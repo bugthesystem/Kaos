@@ -223,7 +223,23 @@ impl<T: RingBufferEntry> SharedRingBuffer<T> {
         Some(seq)
     }
 
-    /// Write a value to a slot in shared memory.
+    /// Write a value to a slot in shared memory (safe, with bounds checking).
+    ///
+    /// Returns `Some(())` if successful, `None` if sequence is out of bounds.
+    #[inline]
+    pub fn write_slot(&mut self, seq: u64, value: T) -> Option<()> {
+        let idx = (seq & self.mask) as usize;
+        if idx >= (self.capacity as usize) {
+            return None;
+        }
+        // SAFETY: bounds checked above
+        unsafe {
+            std::ptr::write_volatile(self.slot_ptr(seq), value);
+        }
+        Some(())
+    }
+
+    /// Write a value to a slot in shared memory (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -232,11 +248,11 @@ impl<T: RingBufferEntry> SharedRingBuffer<T> {
     /// - The slot must be published after writing via `publish()`.
     #[cfg(feature = "unsafe-perf")]
     #[inline(always)]
-    pub unsafe fn write_slot(&mut self, seq: u64, value: T) {
+    pub unsafe fn write_slot_unchecked(&mut self, seq: u64, value: T) {
         std::ptr::write_volatile(self.slot_ptr(seq), value);
     }
 
-    /// Write a value to a slot in shared memory.
+    /// Write a value to a slot in shared memory (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -245,11 +261,11 @@ impl<T: RingBufferEntry> SharedRingBuffer<T> {
     /// - The slot must be published after writing via `publish()`.
     #[cfg(not(feature = "unsafe-perf"))]
     #[inline(always)]
-    pub unsafe fn write_slot(&mut self, seq: u64, value: T) {
+    pub unsafe fn write_slot_unchecked(&mut self, seq: u64, value: T) {
         let idx = (seq & self.mask) as usize;
         debug_assert!(
             idx < (self.capacity as usize),
-            "SharedRingBuffer::write_slot: idx {} >= capacity {}",
+            "SharedRingBuffer::write_slot_unchecked: idx {} >= capacity {}",
             idx,
             self.capacity
         );
@@ -273,8 +289,9 @@ impl<T: RingBufferEntry> SharedRingBuffer<T> {
         };
         let copy_len = data.len().min(slot_bytes.len());
         slot_bytes[..copy_len].copy_from_slice(&data[..copy_len]);
+        // SAFETY: sequence was just claimed, so it's valid
         unsafe {
-            self.write_slot(seq, slot);
+            self.write_slot_unchecked(seq, slot);
         }
         self.publish(seq);
         Ok(seq)
@@ -319,7 +336,20 @@ impl<T: RingBufferEntry> SharedRingBuffer<T> {
         count
     }
 
-    /// Read a value from a slot in shared memory.
+    /// Read a value from a slot in shared memory (safe, with bounds checking).
+    ///
+    /// Returns `Some(value)` if successful, `None` if sequence is out of bounds.
+    #[inline]
+    pub fn read_slot(&self, seq: u64) -> Option<T> {
+        let idx = (seq & self.mask) as usize;
+        if idx >= (self.capacity as usize) {
+            return None;
+        }
+        // SAFETY: bounds checked above
+        Some(unsafe { std::ptr::read_volatile(self.slot_ptr(seq)) })
+    }
+
+    /// Read a value from a slot in shared memory (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -328,11 +358,11 @@ impl<T: RingBufferEntry> SharedRingBuffer<T> {
     /// - Call `advance_consumer()` after processing to update the consumer cursor.
     #[cfg(feature = "unsafe-perf")]
     #[inline(always)]
-    pub unsafe fn read_slot(&self, seq: u64) -> T {
+    pub unsafe fn read_slot_unchecked(&self, seq: u64) -> T {
         std::ptr::read_volatile(self.slot_ptr(seq))
     }
 
-    /// Read a value from a slot in shared memory.
+    /// Read a value from a slot in shared memory (unchecked, no bounds checking).
     ///
     /// # Safety
     ///
@@ -341,11 +371,11 @@ impl<T: RingBufferEntry> SharedRingBuffer<T> {
     /// - Call `advance_consumer()` after processing to update the consumer cursor.
     #[cfg(not(feature = "unsafe-perf"))]
     #[inline(always)]
-    pub unsafe fn read_slot(&self, seq: u64) -> T {
+    pub unsafe fn read_slot_unchecked(&self, seq: u64) -> T {
         let idx = (seq & self.mask) as usize;
         debug_assert!(
             idx < (self.capacity as usize),
-            "SharedRingBuffer::read_slot: idx {} >= capacity {}",
+            "SharedRingBuffer::read_slot_unchecked: idx {} >= capacity {}",
             idx,
             self.capacity
         );

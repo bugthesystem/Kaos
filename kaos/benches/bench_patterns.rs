@@ -43,8 +43,9 @@ fn bench_spmc_1c(events: u64) -> u64 {
         let batch = ((events - cursor) as usize).min(BATCH_SIZE);
         if let Some(next) = ring.try_claim(batch, cursor) {
             for i in 0..batch {
+                // SAFETY: sequence was just claimed
                 unsafe {
-                    ring.write_slot(cursor + (i as u64), Slot8 { value: i as u64 });
+                    ring.write_slot_unchecked(cursor + (i as u64), Slot8 { value: i as u64 });
                 }
             }
             ring.publish(next);
@@ -90,8 +91,9 @@ fn bench_mpmc_2p1c(events: u64) -> u64 {
                 for i in 0..events_per_producer {
                     loop {
                         if let Some(seq) = ring_prod.try_claim(1) {
+                            // SAFETY: sequence was just claimed
                             unsafe {
-                                ring_prod.write_slot(seq, Slot8 { value: i });
+                                ring_prod.write_slot_unchecked(seq, Slot8 { value: i });
                             }
                             ring_prod.publish(seq);
                             prod.fetch_add(1, Ordering::Release);
@@ -137,8 +139,9 @@ fn bench_mpmc_batch(events: u64) -> u64 {
         let batch = ((events - sent) as usize).min(BATCH_SIZE);
         if let Some(seq) = ring.try_claim(batch) {
             for i in 0..batch {
+                // SAFETY: sequence was just claimed
                 unsafe {
-                    ring.write_slot(seq + (i as u64), Slot8 { value: i as u64 });
+                    ring.write_slot_unchecked(seq + (i as u64), Slot8 { value: i as u64 });
                 }
             }
             ring.publish_batch(seq, batch);

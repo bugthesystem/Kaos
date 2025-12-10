@@ -43,9 +43,10 @@ fn main() {
         for number in 1..=MAX_NUMBER {
             loop {
                 if let Some(next) = ring_buffer.try_claim(1, producer_cursor) {
-                    unsafe {
-                        ring_buffer.write_slot(producer_cursor, Slot8 { value: number });
-                    }
+                    // Safe version with bounds checking
+                    ring_buffer
+                        .write_slot(producer_cursor, Slot8 { value: number })
+                        .expect("write_slot failed");
                     ring_buffer.publish(next);
                     producer_cursor = next;
                     sent += 1;
@@ -59,9 +60,10 @@ fn main() {
         for _ in 0..NUM_CONSUMERS {
             loop {
                 if let Some(next) = ring_buffer.try_claim(1, producer_cursor) {
-                    unsafe {
-                        ring_buffer.write_slot(producer_cursor, Slot8 { value: 0 });
-                    }
+                    // Safe version with bounds checking
+                    ring_buffer
+                        .write_slot(producer_cursor, Slot8 { value: 0 })
+                        .expect("write_slot failed");
                     ring_buffer.publish(next);
                     producer_cursor = next;
                     break;

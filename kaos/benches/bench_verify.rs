@@ -159,8 +159,9 @@ fn bench_xor_verify(events: u64) -> u64 {
                 std::sync::atomic::fence(Ordering::Acquire);
                 for i in 0..batch {
                     let seq = cursor + (i as u64);
+                    // SAFETY: sequence is within published range
                     unsafe {
-                        let slot = ring_cons.read_slot(seq);
+                        let slot = ring_cons.read_slot_unchecked(seq);
                         local_xor ^= slot.sequence();
                     }
                 }
@@ -187,8 +188,9 @@ fn bench_xor_verify(events: u64) -> u64 {
                 let seq = cursor + (i as u64);
                 let mut slot = MessageSlot::default();
                 slot.set_sequence(value);
+                // SAFETY: sequence was just claimed
                 unsafe {
-                    ring_mut.write_slot(seq, slot);
+                    ring_mut.write_slot_unchecked(seq, slot);
                 }
                 local_xor ^= value;
                 value = value.wrapping_add(1);

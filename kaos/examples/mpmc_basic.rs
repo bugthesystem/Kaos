@@ -47,9 +47,10 @@ fn main() {
             for number in start_num..end_num {
                 loop {
                     if let Some(sequence) = ring_buffer_clone.try_claim(1) {
-                        unsafe {
-                            ring_buffer_clone.write_slot(sequence, Slot8 { value: number });
-                        }
+                        // Safe version with bounds checking
+                        ring_buffer_clone
+                            .write_slot(sequence, Slot8 { value: number })
+                            .expect("write_slot failed");
                         ring_buffer_clone.publish(sequence);
                         sent += 1;
                         break;
@@ -119,9 +120,10 @@ fn main() {
     for _ in 0..NUM_CONSUMERS {
         loop {
             if let Some(sequence) = ring_buffer.try_claim(1) {
-                unsafe {
-                    ring_buffer.write_slot(sequence, Slot8 { value: 0 });
-                }
+                // Safe version with bounds checking
+                ring_buffer
+                    .write_slot(sequence, Slot8 { value: 0 })
+                    .expect("write_slot failed");
                 ring_buffer.publish(sequence);
                 break;
             }
