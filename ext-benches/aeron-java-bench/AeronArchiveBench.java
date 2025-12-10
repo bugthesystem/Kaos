@@ -1,4 +1,8 @@
-package com.kaos;
+///usr/bin/env jbang "$0" "$@" ; exit $?
+//DEPS io.aeron:aeron-all:1.47.3
+//JAVA_OPTIONS --add-opens java.base/jdk.internal.misc=ALL-UNNAMED
+//JAVA_OPTIONS --add-opens java.base/java.nio=ALL-UNNAMED
+//JAVA_OPTIONS -Dagrona.disable.bounds.checks=true
 
 import io.aeron.Aeron;
 import io.aeron.Publication;
@@ -15,21 +19,19 @@ import java.nio.file.Files;
 
 /**
  * Aeron Archive Benchmark - measures archive throughput
- *
- * Run with:
- * mvn compile exec:java -Dexec.mainClass="com.kaos.AeronArchiveBench"
+ * Run with: jbang AeronArchiveBench.java
  */
 public class AeronArchiveBench {
-    private static final int MESSAGE_COUNT = 1_000_000;
+    private static final int MESSAGE_COUNT = 500_000;  // Same as kaos-rudp
     private static final int MESSAGE_SIZE = 64;
     private static final String CHANNEL = "aeron:ipc";
     private static final int STREAM_ID = 1001;
 
     public static void main(String[] args) throws Exception {
-        System.out.println("=== Aeron Archive Benchmark ===");
-        System.out.println("Messages: " + MESSAGE_COUNT);
-        System.out.println("Message size: " + MESSAGE_SIZE + " bytes");
-        System.out.println();
+        System.out.println("\n╔═══════════════════════════════════════════╗");
+        System.out.println("║  Aeron Archive Benchmark                  ║");
+        System.out.println("╚═══════════════════════════════════════════╝");
+        System.out.printf("%nConfig: %d msgs, %d bytes%n%n", MESSAGE_COUNT, MESSAGE_SIZE);
 
         // Create temp directories
         File aeronDir = Files.createTempDirectory("aeron-bench").toFile();
@@ -38,7 +40,7 @@ public class AeronArchiveBench {
         aeronDir.deleteOnExit();
         archiveDir.deleteOnExit();
 
-        // Start Media Driver with low-latency settings
+        // Start Media Driver
         MediaDriver.Context driverCtx = new MediaDriver.Context()
             .aeronDirectoryName(aeronDir.getAbsolutePath())
             .threadingMode(ThreadingMode.SHARED)
@@ -49,86 +51,68 @@ public class AeronArchiveBench {
         Archive.Context archiveCtx = new Archive.Context()
             .aeronDirectoryName(aeronDir.getAbsolutePath())
             .archiveDir(archiveDir)
+            .controlChannel("aeron:udp?endpoint=localhost:8010")
+            .replicationChannel("aeron:udp?endpoint=localhost:0")
             .threadingMode(ArchiveThreadingMode.SHARED)
             .deleteArchiveOnStart(true);
 
         try (MediaDriver driver = MediaDriver.launch(driverCtx);
              Archive archive = Archive.launch(archiveCtx)) {
 
-            // Connect to Archive
             AeronArchive.Context archiveClientCtx = new AeronArchive.Context()
-                .aeronDirectoryName(aeronDir.getAbsolutePath());
+                .aeronDirectoryName(aeronDir.getAbsolutePath())
+                .controlRequestChannel("aeron:udp?endpoint=localhost:8010")
+                .controlResponseChannel("aeron:udp?endpoint=localhost:0");
 
             try (AeronArchive aeronArchive = AeronArchive.connect(archiveClientCtx)) {
 
-                // Start recording
                 aeronArchive.startRecording(CHANNEL, STREAM_ID, SourceLocation.LOCAL);
 
-                // Get a publication
                 try (Publication publication = aeronArchive.context().aeron()
                         .addPublication(CHANNEL, STREAM_ID)) {
 
-                    // Wait for connection
                     while (!publication.isConnected()) {
                         Thread.yield();
                     }
 
-                    // Prepare message
                     UnsafeBuffer buffer = new UnsafeBuffer(new byte[MESSAGE_SIZE]);
-                    for (int i = 0; i < MESSAGE_SIZE; i++) {
-                        buffer.putByte(i, (byte) 0);
-                    }
 
                     // Warmup
                     System.out.println("Warming up...");
-                    for (int i = 0; i < 100_000; i++) {
+                    for (int i = 0; i < 50_000; i++) {
                         while (publication.offer(buffer, 0, MESSAGE_SIZE) < 0) {
                             Thread.yield();
                         }
                     }
-                    Thread.sleep(500);
+                    Thread.sleep(200);
 
                     // Benchmark
-                    System.out.println("Benchmarking " + MESSAGE_COUNT + " messages...");
+                    System.out.println("Benchmarking...");
                     long start = System.nanoTime();
-                    long backpressure = 0;
 
                     for (int i = 0; i < MESSAGE_COUNT; i++) {
                         while (publication.offer(buffer, 0, MESSAGE_SIZE) < 0) {
-                            backpressure++;
                             Thread.yield();
                         }
                     }
 
                     long sendTime = System.nanoTime() - start;
-
-                    // Wait for archive to catch up
-                    Thread.sleep(1000);
+                    Thread.sleep(500); // wait for archive
                     long totalTime = System.nanoTime() - start;
 
-                    // Results
-                    double sendSec = sendTime / 1_000_000_000.0;
-                    double totalSec = totalTime / 1_000_000_000.0;
-                    double sendRate = MESSAGE_COUNT / sendSec / 1_000_000.0;
-                    double totalRate = MESSAGE_COUNT / totalSec / 1_000_000.0;
-                    double bandwidth = (MESSAGE_COUNT * (long) MESSAGE_SIZE) / totalSec / (1024 * 1024 * 1024.0);
+                    double sendSec = sendTime / 1e9;
+                    double totalSec = totalTime / 1e9;
 
-                    System.out.println();
-                    System.out.println("=== Results ===");
-                    System.out.printf("Send time:       %.3f ms%n", sendTime / 1_000_000.0);
-                    System.out.printf("Total time:      %.3f ms%n", totalTime / 1_000_000.0);
-                    System.out.printf("Send rate:       %.2f M/s%n", sendRate);
-                    System.out.printf("Total rate:      %.2f M/s%n", totalRate);
-                    System.out.printf("Bandwidth:       %.2f GB/s%n", bandwidth);
-                    System.out.printf("Backpressure:    %d%n", backpressure);
-                    System.out.printf("Latency/msg:     %.1f ns%n", (double) sendTime / MESSAGE_COUNT);
+                    System.out.println("\n═══════════════════════════════════════════");
+                    System.out.printf("  Messages:    %d%n", MESSAGE_COUNT);
+                    System.out.printf("  Send time:   %.3fs%n", sendSec);
+                    System.out.printf("  Throughput:  %.2f M/s%n", MESSAGE_COUNT / sendSec / 1e6);
+                    System.out.printf("  Latency:     %.1f ns/msg%n", (double) sendTime / MESSAGE_COUNT);
+                    System.out.println("═══════════════════════════════════════════\n");
                 }
 
-                // Stop recording
                 aeronArchive.stopRecording(CHANNEL, STREAM_ID);
             }
         }
-
-        System.out.println("\nDone.");
     }
 }
