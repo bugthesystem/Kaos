@@ -33,13 +33,23 @@ NAK-based reliable delivery with AIMD congestion control.
 |---------|--------|
 | Sequence numbers | ✅ |
 | NAK retransmission | ✅ |
+| NAK backoff (per RTT) | ✅ |
+| Retransmit pacing | ✅ |
 | Sliding window | ✅ |
-| Congestion control | ✅ |
+| Congestion control (AIMD) | ✅ |
+| RTT measurement | ✅ |
 
-## Benchmarks
+## Performance
+
+| Benchmark | Kaos RUDP | Aeron UDP |
+|-----------|-----------|-----------|
+| Throughput | **3.7 M/s** | 2.6 M/s |
+| Delivery | 100% | 100% |
+
+Same conditions: 500K messages, 8 bytes, localhost, M1 Pro.
 
 ```bash
-cargo bench -p kaos-rudp
+cargo run -p kaos-rudp --release --example rudp_bench
 ```
 
 ## License

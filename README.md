@@ -99,8 +99,8 @@ Measured on Apple M1 Pro (actual `cargo bench` results).
 | Ring buffer (per-event, 1B) | 425 M/s |
 | IPC single send (8B) | 147 M/s |
 | IPC sustained (100K) | 595 M/s |
+| RUDP (reliable UDP) | 3.7 M/s (vs Aeron 2.6 M/s) |
 | Archive IPC (64B) | 12 M/s |
-| Archive IPC (256B) | 28 M/s |
 | Archive read (64B) | 35 ns |
 
 ```bash
