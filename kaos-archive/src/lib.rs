@@ -4,9 +4,11 @@
 //! - `SyncArchive` - 22 M/s, crash-safe per write
 
 mod archive;
+mod buffered;
 mod sync_archive;
 
 pub use archive::Archive;
+pub use buffered::BufferedArchive;
 pub use sync_archive::SyncArchive;
 
 #[derive(Debug, thiserror::Error)]

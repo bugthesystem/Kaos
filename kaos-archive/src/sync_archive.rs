@@ -71,6 +71,9 @@ impl SyncArchive {
         let idx_base = index_mmap.as_mut_ptr();
         let idx_len = index_mmap.len();
 
+        // Hint: sequential access
+        let _ = log_mmap.advise(memmap2::Advice::Sequential);
+
         Ok(Self {
             log_mmap, index_mmap, _log_file: log_file, _index_file: index_file,
             capacity, write_pos: HEADER_SIZE, msg_count: 0,
@@ -143,6 +146,44 @@ impl SyncArchive {
         }
 
         Ok(seq)
+    }
+
+    // ─── Batch append ─────────────────────────────────────────────────────────
+
+    /// Batch append same-size messages (fastest - single memcpy per message).
+    #[inline]
+    pub fn append_batch(&mut self, messages: &[&[u8]]) -> Result<u64, ArchiveError> {
+        if messages.is_empty() { return Ok(self.msg_count); }
+        
+        let msg_size = messages[0].len();
+        let frame_size = FRAME_HEADER_SIZE + msg_size;
+        let total = frame_size * messages.len();
+        
+        if self.write_pos + total > self.capacity {
+            return Err(ArchiveError::Full);
+        }
+
+        let start_seq = self.msg_count;
+        unsafe { self.write_batch_raw(messages, msg_size); }
+        Ok(start_seq)
+    }
+
+    #[inline(always)]
+    unsafe fn write_batch_raw(&mut self, messages: &[&[u8]], msg_size: usize) {
+        let frame_size = FRAME_HEADER_SIZE + msg_size;
+        let mut ptr = self.log_base.add(self.write_pos);
+
+        for data in messages {
+            // Header: len (4) + checksum (4)
+            std::ptr::write_unaligned(ptr as *mut u64, msg_size as u64); // len + 0 checksum
+            ptr = ptr.add(FRAME_HEADER_SIZE);
+            // Payload
+            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, msg_size);
+            ptr = ptr.add(msg_size);
+        }
+
+        self.write_pos += frame_size * messages.len();
+        self.msg_count += messages.len() as u64;
     }
 
     // ─── Append (unsafe) ─────────────────────────────────────────────────────

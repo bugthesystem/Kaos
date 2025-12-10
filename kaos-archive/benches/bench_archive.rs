@@ -1,7 +1,7 @@
 //! Archive benchmarks
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
-use kaos_archive::{Archive, SyncArchive};
+use kaos_archive::{Archive, BufferedArchive, SyncArchive};
 use tempfile::tempdir;
 
 fn bench_append(c: &mut Criterion) {
@@ -101,6 +101,19 @@ fn bench_throughput(c: &mut Criterion) {
         });
     });
 
+    // Batch append (64 messages per batch)
+    let batch: Vec<&[u8]> = (0..64).map(|_| msg.as_slice()).collect();
+    group.bench_function("sync-1M-64B-batch64", |b| {
+        b.iter(|| {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("bench");
+            let mut archive = SyncArchive::create(&path, 1024 * 1024 * 1024).unwrap();
+            for _ in 0..15625 { // 1M / 64
+                black_box(archive.append_batch(&batch).unwrap());
+            }
+        });
+    });
+
     // Archive (async) benchmark
     group.bench_function("async-1M-64B", |b| {
         b.iter(|| {
@@ -113,6 +126,19 @@ fn bench_throughput(c: &mut Criterion) {
                 }
             }
             archive.flush();
+        });
+    });
+
+    // Buffered file (no mmap)
+    group.bench_function("buffered-1M-64B", |b| {
+        b.iter(|| {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("bench");
+            let mut archive = BufferedArchive::create(&path).unwrap();
+            for _ in 0..1_000_000 {
+                black_box(archive.append(&msg).unwrap());
+            }
+            archive.flush().unwrap();
         });
     });
 
