@@ -166,7 +166,7 @@ producer.publish(|slot| {
 });
 ```
 
-## Archived RUDP (Aeron-style)
+## Archived RUDP
 
 Combine reliable UDP with persistent archive for:
 - **Retransmission from disk** — When ring buffer wraps, retransmit from archive
