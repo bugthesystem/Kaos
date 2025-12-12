@@ -6,7 +6,7 @@ Message archive with mmap for random read access.
 
 | Type | Throughput | Use Case |
 |------|-----------|----------|
-| `Archive` | 17 M/s | Async, background writer |
+| `Archive` | 21 M/s | Async, background writer |
 | `MmapArchive` | 28 M/s | Sync, crash-safe per write |
 
 ## Usage

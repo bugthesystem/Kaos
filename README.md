@@ -50,6 +50,7 @@ Kaos provides lock-free ring buffers for inter-thread, inter-process, and networ
 | **Linux** | sendmmsg/recvmmsg | ✅ |
 | | io_uring | ✅ |
 | | AF_XDP kernel bypass | ✅ |
+| | NUMA / thread affinity | ⚠️ Experimental |
 | **Observability** | Tracing / Tracy | ✅ |
 
 ## Observability

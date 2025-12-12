@@ -14,41 +14,29 @@
 | AF_XDP kernel bypass | ⚠️ Compiles, needs testing |
 | Tracing / Tracy profiler | ✅ |
 | UDP multicast | ✅ |
-| Message archive | ✅ |
+| Message archive (sync + async) | ✅ |
+| Thread affinity (Linux) | ⚠️ Experimental |
+| NUMA detection | ⚠️ Experimental |
+| NUMA-aware allocation | ❌ Planned |
 
-## Architecture
+## NUMA Support
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      APPLICATION                            │
-│       Producer ───► Ring Buffer (2.2 G/s) ───► Consumer    │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                    Shared Memory (mmap)
-                              │
-┌─────────────────────────────────────────────────────────────┐
-│                    MEDIA DRIVER                             │
-│    sendmmsg  │  io_uring  │  AF_XDP  │  Reliable UDP       │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                           Network
-```
+### Done
+- `pin_to_core(cpu)` - pin thread to CPU
+- `pin_to_numa_node(node)` - pin thread to NUMA node
+- `current_numa_node()` - get current node
+- `numa_available()` - check NUMA support
+- `numa_node_count()` - get node count
 
-## Constants Reference
-
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| `SEND_BUFFER_SIZE` | 64KB | Max UDP send buffer |
-| `RECV_PACKET_SIZE` | 2KB | Per-packet receive buffer (> MTU 1500) |
-| `RECV_BATCH_SIZE` | 64 | Packets per recvmmsg syscall |
-| `SOCKET_BUFFER_SIZE` | 8MB | OS socket buffer for throughput |
-| `MAX_MESSAGE_DATA_SIZE` | 1KB | Max payload in MessageSlot |
+### TODO
+- `RingBufferConfig::with_numa_node(n)` - allocate buffer on specific node
+- `numa_alloc_on_node()` - low-level NUMA allocation
+- Benchmark on real multi-socket hardware
 
 ## Testing
 
 ```bash
-cargo test --workspace           # Unit tests
-cargo bench -p kaos              # Benchmarks
-cargo clippy --workspace         # Lint
-RUSTFLAGS="--cfg loom" cargo test -p kaos --test loom_ring_buffer --release  # Loom
+cargo test --workspace
+cargo bench -p kaos
+RUSTFLAGS="--cfg loom" cargo test -p kaos --test loom_ring_buffer --release
 ```
