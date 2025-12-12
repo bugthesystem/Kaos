@@ -39,7 +39,8 @@ impl UringDriver {
             let e = opcode::Send::new(types::Fd(self.fd), buf.as_ptr(), buf.len() as u32)
                 .build()
                 .user_data(i as u64);
-            if sq.push(&e).is_err() {
+            // SAFETY: Entry is valid for the lifetime of self.fd
+            if unsafe { sq.push(&e) }.is_err() {
                 break;
             }
             n += 1;
@@ -56,7 +57,8 @@ impl UringDriver {
             let e = opcode::Recv::new(types::Fd(self.fd), self.bufs[self.pending].as_mut_ptr(), 8)
                 .build()
                 .user_data(RECV_USER_DATA_BASE + (self.pending as u64));
-            if sq.push(&e).is_err() {
+            // SAFETY: Entry is valid for the lifetime of self.bufs
+            if unsafe { sq.push(&e) }.is_err() {
                 break;
             }
             self.pending += 1;
@@ -86,5 +88,59 @@ impl UringDriver {
             }
         }
         count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_uring_driver_create() {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let driver = UringDriver::new(&socket);
+        
+        // io_uring may fail if kernel doesn't support SQPOLL (needs root)
+        // or if kernel version < 5.6
+        match driver {
+            Ok(d) => {
+                println!("io_uring: driver created, fd={}", d.fd);
+                assert!(d.pending == 0);
+            }
+            Err(e) => {
+                // Expected on kernels without SQPOLL support or in containers
+                println!("io_uring: not available - {:?}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_uring_send() {
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let recv_addr = receiver.local_addr().unwrap();
+        
+        sender.connect(recv_addr).unwrap();
+        receiver.set_nonblocking(true).unwrap();
+
+        let mut driver = match UringDriver::new(&sender) {
+            Ok(d) => d,
+            Err(_) => {
+                println!("io_uring: skipping test (not available)");
+                return;
+            }
+        };
+
+        // Submit sends
+        let data: Vec<[u8; 8]> = (0..10).map(|i| [i as u8; 8]).collect();
+        let submitted = driver.submit_sends(&data).unwrap();
+        
+        assert!(submitted > 0, "Should submit at least one send");
+        println!("io_uring: submitted {} sends", submitted);
+
+        // Wait for completions
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let completed = driver.poll_completions(|_| {});
+        println!("io_uring: {} completions", completed);
     }
 }

@@ -189,3 +189,84 @@ impl BatchReceiver {
         &[]
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use std::net::UdpSocket;
+    use std::os::unix::io::AsRawFd;
+
+    #[test]
+    fn test_sendmmsg_batch() {
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let recv_addr = receiver.local_addr().unwrap();
+
+        receiver.set_nonblocking(true).unwrap();
+
+        let mut batch_sender = BatchSender::new(64);
+        let packets: Vec<Vec<u8>> = (0..10).map(|i| format!("msg-{}", i).into_bytes()).collect();
+        let packet_refs: Vec<&[u8]> = packets.iter().map(|p| p.as_slice()).collect();
+
+        let sent = unsafe {
+            batch_sender
+                .send_batch(sender.as_raw_fd(), &packet_refs, &recv_addr)
+                .unwrap()
+        };
+
+        assert_eq!(sent, 10, "Should send all 10 packets");
+
+        // Give network time to deliver
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Receive with recvmmsg
+        let mut batch_receiver = BatchReceiver::new(64, 1024);
+        let received = unsafe { batch_receiver.recv_batch(receiver.as_raw_fd()).unwrap() };
+
+        assert!(received >= 10, "Should receive at least 10 packets");
+
+        // Verify first packet
+        let first = batch_receiver.packet(0);
+        assert_eq!(first, b"msg-0");
+    }
+
+    #[test]
+    fn test_sendmmsg_large_batch() {
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let recv_addr = receiver.local_addr().unwrap();
+
+        // Increase buffer size using setsockopt
+        unsafe {
+            let buf_size: i32 = 8 * 1024 * 1024;
+            libc::setsockopt(
+                sender.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                &buf_size as *const i32 as *const libc::c_void,
+                std::mem::size_of::<i32>() as u32,
+            );
+            libc::setsockopt(
+                receiver.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                &buf_size as *const i32 as *const libc::c_void,
+                std::mem::size_of::<i32>() as u32,
+            );
+        }
+        receiver.set_nonblocking(true).unwrap();
+
+        let mut batch_sender = BatchSender::new(256);
+        let packets: Vec<Vec<u8>> = (0..100).map(|i| vec![i as u8; 64]).collect();
+        let packet_refs: Vec<&[u8]> = packets.iter().map(|p| p.as_slice()).collect();
+
+        let sent = unsafe {
+            batch_sender
+                .send_batch(sender.as_raw_fd(), &packet_refs, &recv_addr)
+                .unwrap()
+        };
+
+        assert_eq!(sent, 100, "Should send all 100 packets");
+        println!("sendmmsg: sent {} packets in one syscall", sent);
+    }
+}

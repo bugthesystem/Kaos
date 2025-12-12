@@ -11,7 +11,7 @@
 | Congestion control (AIMD) | ✅ |
 | sendmmsg/recvmmsg (Linux) | ✅ |
 | io_uring (Linux) | ✅ |
-| AF_XDP kernel bypass | ⚠️ Compiles, needs testing |
+| AF_XDP kernel bypass | ⚠️ Nightly only (libxdp-sys requires edition 2024) |
 | Tracing / Tracy profiler | ✅ |
 | UDP multicast | ✅ |
 | Message archive (sync + async) | ✅ |

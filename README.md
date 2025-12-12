@@ -49,7 +49,7 @@ Kaos provides lock-free ring buffers for inter-thread, inter-process, and networ
 | | Late joiner replay | ✅ |
 | **Linux** | sendmmsg/recvmmsg | ✅ |
 | | io_uring | ✅ |
-| | AF_XDP kernel bypass | ✅ |
+| | AF_XDP kernel bypass | ⚠️ Nightly, needs real kernel |
 | | NUMA / thread affinity | ⚠️ Experimental |
 | **Observability** | Tracing / Tracy | ✅ |
 
@@ -102,7 +102,7 @@ Measured on Apple M1 Pro (actual `cargo bench` results).
 | IPC sustained (100K) | 595 M/s |
 | RUDP (reliable UDP) | 3.7 M/s (vs Aeron 2.6 M/s) |
 | Archive | 30-34 M/s (vs Aeron 26 M/s) |
-| SyncArchive | 22 M/s |
+| MmapArchive | 28 M/s |
 | Archive read (64B) | 35 ns |
 
 ```bash

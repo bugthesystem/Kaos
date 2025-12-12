@@ -11,7 +11,7 @@
 
 use crate::{FastHeader, ReliableUdpRingBufferTransport};
 use kaos::disruptor::{MessageRingBuffer, RingBufferConfig, RingBufferEntry};
-use kaos_archive::{Archive, ArchiveError};
+use kaos_archive::{ArchiveError, MmapArchive};
 use std::cell::UnsafeCell;
 use std::io;
 use std::net::SocketAddr;
@@ -56,7 +56,7 @@ pub struct ArchivedTransport {
     inner: ReliableUdpRingBufferTransport,
     tap_buffer: Arc<SpscBuffer>,
     producer_seq: u64,
-    archive: Arc<std::sync::Mutex<Archive>>,
+    archive: Arc<std::sync::Mutex<MmapArchive>>,
     running: Arc<AtomicBool>,
     recorder_handle: Option<JoinHandle<()>>,
     archived_seq: Arc<AtomicU64>,
@@ -103,7 +103,7 @@ impl ArchivedTransport {
         archive_capacity: usize,
     ) -> Result<Self, ArchivedError> {
         let inner = ReliableUdpRingBufferTransport::new(local_addr, remote_addr, window_size)?;
-        let archive = Archive::create(archive_path, archive_capacity)?;
+        let archive = MmapArchive::create(archive_path, archive_capacity)?;
 
         let config = RingBufferConfig::new(window_size)
             .map_err(|e| io::Error::other(format!("Config: {}", e)))?
@@ -150,7 +150,7 @@ impl ArchivedTransport {
         tap_buffer: Arc<SpscBuffer>,
         msg_count: Arc<AtomicU64>,
         archived_seq: Arc<AtomicU64>,
-        archive: Arc<std::sync::Mutex<Archive>>,
+        archive: Arc<std::sync::Mutex<MmapArchive>>,
         running: Arc<AtomicBool>,
     ) {
         const BATCH_SIZE: usize = 64;
@@ -264,7 +264,8 @@ impl ArchivedTransport {
             return Err(ArchivedError::Archive(ArchiveError::InvalidSequence(seq)));
         }
 
-        let data = archive.read_unchecked(seq)?;
+        // SAFETY: We checked seq < len() above
+        let data = unsafe { archive.read_unchecked(seq) };
         let header = FastHeader::new(seq as u32, data.len());
         let mut packet = Vec::with_capacity(FastHeader::SIZE + data.len());
         packet.extend_from_slice(bytemuck::bytes_of(&header));
@@ -379,20 +380,28 @@ impl Drop for ArchivedTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU16, Ordering as AtomicOrdering};
     use tempfile::tempdir;
 
-    fn get_test_addr(base: u16) -> SocketAddr {
-        format!("127.0.0.1:{}", base).parse().unwrap()
+    static TEST_PORT: AtomicU16 = AtomicU16::new(40000);
+
+    fn next_port_pair() -> (SocketAddr, SocketAddr) {
+        let base = TEST_PORT.fetch_add(100, AtomicOrdering::Relaxed);
+        (
+            format!("127.0.0.1:{}", base).parse().unwrap(),
+            format!("127.0.0.1:{}", base + 1).parse().unwrap(),
+        )
     }
 
     #[test]
     fn test_send_archive() {
         let dir = tempdir().unwrap();
         let archive_path = dir.path().join("archive");
+        let (local, remote) = next_port_pair();
 
         let mut transport = ArchivedTransport::new(
-            get_test_addr(21000),
-            get_test_addr(21100),
+            local,
+            remote,
             1024,
             &archive_path,
             1024 * 1024,
@@ -407,17 +416,18 @@ mod tests {
 
         assert!(transport.archive_len() > 0);
         let archive = transport.archive.lock().unwrap();
-        assert_eq!(archive.read_unchecked(0).unwrap(), b"tap-msg-0");
+        assert_eq!(unsafe { archive.read_unchecked(0) }, b"tap-msg-0");
     }
 
     #[test]
     fn test_archive_performance() {
         let dir = tempdir().unwrap();
         let archive_path = dir.path().join("perf");
+        let (local, remote) = next_port_pair();
 
         let mut transport = ArchivedTransport::new(
-            get_test_addr(21200),
-            get_test_addr(21300),
+            local,
+            remote,
             8192,
             &archive_path,
             64 * 1024 * 1024,
@@ -449,5 +459,92 @@ mod tests {
             "Send took too long: {:?}",
             send_time
         );
+    }
+
+    #[test]
+    fn test_retransmit_from_archive() {
+        use std::net::UdpSocket;
+
+        let dir = tempdir().unwrap();
+        let archive_path = dir.path().join("retransmit");
+        // Need 3 ports: sender, sender+1 (NAK socket), and receiver
+        let base = TEST_PORT.fetch_add(100, AtomicOrdering::Relaxed);
+        let send_addr: SocketAddr = format!("127.0.0.1:{}", base).parse().unwrap();
+        let recv_addr: SocketAddr = format!("127.0.0.1:{}", base + 10).parse().unwrap();
+
+        // Bind receiver FIRST so we can receive the packets
+        let receiver = UdpSocket::bind(recv_addr).unwrap();
+        receiver.set_nonblocking(true).unwrap();
+
+        // Sender with archive - sends TO the receiver
+        let mut sender = ArchivedTransport::new(
+            send_addr,
+            recv_addr,
+            1024,
+            &archive_path,
+            1024 * 1024,
+        )
+        .unwrap();
+
+        // Send messages
+        for i in 0..10 {
+            let _ = sender.send(format!("msg-{}", i).as_bytes());
+        }
+        sender.wait_for_archive();
+        sender.flush().unwrap();
+
+        // Drain initial sends
+        let mut buf = [0u8; 2048];
+        while receiver.recv(&mut buf).is_ok() {}
+
+        // Retransmit from archive (simulates NAK response)
+        sender.retransmit_from_archive(5).unwrap();
+
+        // Receive retransmitted packet
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let n = receiver.recv(&mut buf).expect("Should receive retransmit");
+        assert!(n > 0, "Retransmit packet should have data");
+
+        // Verify it contains "msg-5"
+        let packet = &buf[..n];
+        assert!(packet.len() > FastHeader::SIZE);
+        let payload = &packet[FastHeader::SIZE..];
+        assert_eq!(payload, b"msg-5", "Retransmit should contain correct message");
+    }
+
+    #[test]
+    fn test_late_joiner_replay() {
+        let dir = tempdir().unwrap();
+        let archive_path = dir.path().join("replay");
+        let (local, remote) = next_port_pair();
+
+        let mut transport = ArchivedTransport::new(
+            local,
+            remote,
+            8192, // Larger window
+            &archive_path,
+            1024 * 1024,
+        )
+        .unwrap();
+
+        // Send messages (ignore congestion errors - we just need archived data)
+        for i in 0..100 {
+            let _ = transport.send(format!("event-{}", i).as_bytes());
+        }
+        transport.wait_for_archive();
+        transport.flush().unwrap();
+
+        // Late joiner replays from sequence 50 to 60
+        let mut replayed = Vec::new();
+        let count = transport
+            .replay(50, 60, |seq, data| {
+                replayed.push((seq, String::from_utf8_lossy(data).to_string()));
+            })
+            .unwrap();
+
+        assert_eq!(count, 10, "Should replay 10 messages");
+        assert_eq!(replayed.len(), 10);
+        assert_eq!(replayed[0], (50, "event-50".to_string()));
+        assert_eq!(replayed[9], (59, "event-59".to_string()));
     }
 }

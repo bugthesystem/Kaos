@@ -321,6 +321,23 @@ impl MmapArchive {
         header.write_pos.store(self.write_pos as u64, Ordering::Relaxed);
         header.msg_count.store(self.msg_count, Ordering::Release);
     }
+
+    /// Replay messages in range [from, to) calling handler for each.
+    /// Returns number of messages replayed.
+    pub fn replay<F>(&self, from: u64, to: u64, mut handler: F) -> Result<u64, ArchiveError>
+    where
+        F: FnMut(u64, &[u8]),
+    {
+        let end = to.min(self.msg_count);
+        if from >= end {
+            return Ok(0);
+        }
+        for seq in from..end {
+            let data = self.read(seq)?;
+            handler(seq, data);
+        }
+        Ok(end - from)
+    }
 }
 
 impl Drop for MmapArchive {
@@ -353,6 +370,63 @@ mod tests {
         unsafe {
             assert_eq!(archive.read_unchecked(seq), b"hello");
             assert_eq!(archive.read_unchecked(seq2), b"world");
+        }
+    }
+
+    #[test]
+    fn test_crash_recovery() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("crash_test");
+
+        // Phase 1: Write data then "crash" (drop without explicit close)
+        {
+            let mut archive = MmapArchive::create(&path, 1024 * 1024).unwrap();
+            for i in 0..100 {
+                archive.append(format!("msg-{}", i).as_bytes()).unwrap();
+            }
+            assert_eq!(archive.len(), 100);
+            // Drop happens here - simulates crash
+        }
+
+        // Phase 2: Reopen and verify data survived
+        {
+            let archive = MmapArchive::open(&path).unwrap();
+            assert_eq!(archive.len(), 100, "All messages should survive crash");
+
+            // Verify first and last messages
+            assert_eq!(archive.read(0).unwrap(), b"msg-0");
+            assert_eq!(archive.read(99).unwrap(), b"msg-99");
+
+            // Verify middle message
+            assert_eq!(archive.read(50).unwrap(), b"msg-50");
+        }
+    }
+
+    #[test]
+    fn test_crash_recovery_with_replay() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("crash_replay");
+
+        // Write and "crash"
+        {
+            let mut archive = MmapArchive::create(&path, 1024 * 1024).unwrap();
+            for i in 0..50 {
+                archive.append(format!("event-{}", i).as_bytes()).unwrap();
+            }
+        }
+
+        // Reopen and replay
+        {
+            let archive = MmapArchive::open(&path).unwrap();
+            let mut replayed = Vec::new();
+            
+            archive.replay(10, 20, |seq, data| {
+                replayed.push((seq, String::from_utf8_lossy(data).to_string()));
+            }).unwrap();
+
+            assert_eq!(replayed.len(), 10);
+            assert_eq!(replayed[0], (10, "event-10".to_string()));
+            assert_eq!(replayed[9], (19, "event-19".to_string()));
         }
     }
 }

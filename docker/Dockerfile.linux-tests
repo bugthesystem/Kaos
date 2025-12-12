@@ -1,0 +1,29 @@
+FROM rust:1.87-slim-bookworm
+
+# Install rustup and switch to nightly
+RUN rustup default nightly
+
+# Install dependencies for Linux-specific features
+RUN apt-get update && apt-get install -y \
+    numactl \
+    libnuma-dev \
+    liburing-dev \
+    libxdp-dev \
+    libbpf-dev \
+    clang \
+    llvm \
+    build-essential \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy source
+COPY . .
+
+# Build all packages with Linux features
+RUN cargo build --release --workspace
+
+# Default: run tests
+CMD ["cargo", "test", "--release", "--workspace"]
+
