@@ -10,7 +10,10 @@ const GROUP: Ipv4Addr = Ipv4Addr::new(239, 255, 0, 1);
 const PORT: u16 = 5555;
 
 fn main() {
-    let mode = std::env::args().nth(1).unwrap_or_else(|| "recv".into());
+    let mode = std::env
+        ::args()
+        .nth(1)
+        .unwrap_or_else(|| "recv".into());
 
     match mode.as_str() {
         "send" => {

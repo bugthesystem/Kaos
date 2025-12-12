@@ -12,11 +12,10 @@ repository = "https://github.com/bugthesystem/kaos"
 
 [features]
 default = []
-debug = []
 driver = ["kaos-ipc"]
 archive = ["kaos-archive"]
-tracing = ["kaos/tracing"]
-tracy = ["kaos/tracy"]
+tracing = ["dep:tracing", "kaos/tracing"]
+tracy = ["tracing", "kaos/tracy"]
 
 [dependencies]
 kaos = { path = "../kaos" }
@@ -25,6 +24,7 @@ kaos-archive = { path = "../kaos-archive", optional = true }
 bytemuck = { version = "1.14", features = ["derive"] }
 libc = "0.2"
 socket2 = "0.6.1"
+tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

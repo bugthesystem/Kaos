@@ -3,7 +3,7 @@
 //! Uses shared memory (kaos-ipc) instead of direct syscalls.
 //! Apps get zero-syscall messaging, driver handles network I/O.
 
-use kaos_ipc::{Publisher, Subscriber};
+use kaos_ipc::{ Publisher, Subscriber };
 use std::io;
 
 /// Default IPC path for app → driver messages
@@ -25,11 +25,7 @@ impl DriverTransport {
     pub fn new() -> io::Result<Self> {
         // Step 1: App creates send ring (driver is waiting for this)
         let to_driver = Publisher::create(SEND_PATH, RING_SIZE)?;
-        println!("Created send ring: {}", SEND_PATH);
-
-        // Step 2: Wait for driver to create recv ring (it will after seeing send)
         let from_driver = Self::wait_for_recv_ring()?;
-        println!("Connected to recv ring: {}", RECV_PATH);
 
         Ok(Self {
             to_driver,
@@ -45,7 +41,9 @@ impl DriverTransport {
         // Wait for driver
         let from_driver = loop {
             match Subscriber::open(recv_path) {
-                Ok(s) => break s,
+                Ok(s) => {
+                    break s;
+                }
                 Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
             }
         };
@@ -64,10 +62,7 @@ impl DriverTransport {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "kaos-driver not running",
-        ))
+        Err(io::Error::new(io::ErrorKind::NotFound, "kaos-driver not running"))
     }
 
     /// Send a u64 value (zero syscalls!)

@@ -28,12 +28,9 @@
 //! - Sliding window flow control
 //! - Multicast-friendly (no ACKs required)
 
-use bytemuck::{Pod, Zeroable};
-use kaos::crc32;
 use kaos::disruptor::{MessageRingBuffer, RingBufferConfig, RingBufferEntry};
 use std::cell::RefCell;
 use std::net::{SocketAddr, UdpSocket};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 // Buffer sizes for UDP I/O
 /// Max send buffer (64KB = max UDP payload with some headroom)
@@ -54,6 +51,7 @@ thread_local! {
     static RECV_LENS: RefCell<Vec<usize>> = RefCell::new(vec![0usize; RECV_BATCH_SIZE]);
 }
 
+mod header;
 mod transport;
 
 #[cfg(feature = "archive")]
@@ -64,6 +62,19 @@ pub mod driver;
 pub mod multicast;
 mod sendmmsg;
 mod window;
+
+pub use header::{FastHeader, MessageType, ReliableUdpHeader, FAST_HEADER_MAGIC, FLAG_NO_CRC};
+
+// Tracing macros - no-op when feature disabled
+#[cfg(feature = "tracing")]
+macro_rules! trace_debug { ($($arg:tt)*) => { tracing::debug!($($arg)*) } }
+#[cfg(not(feature = "tracing"))]
+macro_rules! trace_debug { ($($arg:tt)*) => {} }
+
+#[cfg(feature = "tracing")]
+macro_rules! trace_warn { ($($arg:tt)*) => { tracing::warn!($($arg)*) } }
+#[cfg(not(feature = "tracing"))]
+macro_rules! trace_warn { ($($arg:tt)*) => {} }
 
 // Core trait - all transports implement this
 pub use transport::{Archived, BatchTransport, Reliable, Transport};
@@ -78,146 +89,7 @@ use kaos::{record_backpressure, record_receive, record_retransmit, record_send};
 pub use multicast::{MulticastSocket, MulticastTransport};
 use window::BitmapWindow;
 
-/// Message types for reliable UDP protocol
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum MessageType {
-    Data = 0,
-    Heartbeat = 1,
-    Nak = 2,
-    SessionStart = 3,
-    SessionEnd = 4,
-    Ack = 5, // Acknowledgment for reliable delivery
-}
-
-/// Header flags for fast path
-pub const FLAG_NO_CRC: u8 = 0x01; // Skip CRC
-
-/// Aeron-style minimal frame header (8 bytes only!)
-/// 8-byte header (3x smaller than ReliableUdpHeader)
-#[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
-pub struct FastHeader {
-    pub frame_length: u32, // Total frame length including header (high bit set = FastHeader magic)
-    pub sequence: u32,     // Sequence number (32-bit is enough for most use cases)
-}
-
-/// Magic marker in high bit of frame_length to identify FastHeader format
-pub const FAST_HEADER_MAGIC: u32 = 0x80000000;
-
-impl FastHeader {
-    pub const SIZE: usize = 8;
-
-    #[inline(always)]
-    pub fn new(sequence: u32, payload_len: usize) -> Self {
-        Self {
-            // Set high bit as magic marker + actual length in lower 31 bits
-            frame_length: FAST_HEADER_MAGIC | ((Self::SIZE + payload_len) as u32),
-            sequence,
-        }
-    }
-}
-
-/// Reliable UDP packet header
-#[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
-pub struct ReliableUdpHeader {
-    /// Session ID for multiplexing
-    pub session_id: u32,
-    /// Sequence number
-    pub sequence: u64,
-    /// Message type
-    pub msg_type: u8,
-    /// Flags (reserved for future use)
-    pub flags: u8,
-    /// Payload length
-    pub payload_len: u16,
-    /// Timestamp (milliseconds since epoch) - RELIABLE-UDP-OPTIMIZED: Reduced from 64-bit to 32-bit
-    pub timestamp: u32,
-    /// Checksum (CRC32)
-    pub checksum: u32,
-}
-
-impl ReliableUdpHeader {
-    const SIZE: usize = std::mem::size_of::<Self>();
-
-    pub fn new(session_id: u32, sequence: u64, msg_type: MessageType, payload_len: u16) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u32;
-
-        Self {
-            session_id,
-            sequence,
-            msg_type: msg_type as u8,
-            flags: 0,
-            payload_len,
-            timestamp,
-            checksum: 0, // Calculated later
-        }
-    }
-
-    /// Convert from bytes (safe via bytemuck)
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < Self::SIZE {
-            return None;
-        }
-        // Safe: ReliableUdpHeader derives Pod
-        Some(*bytemuck::from_bytes::<Self>(&bytes[..Self::SIZE]))
-    }
-
-    pub fn from_packet_with_payload_check(packet: &[u8]) -> Option<(&Self, &[u8])> {
-        if packet.len() < Self::SIZE {
-            return None;
-        }
-
-        let (header_bytes, payload) = packet.split_at(Self::SIZE);
-        let header = bytemuck::from_bytes::<Self>(header_bytes);
-
-        // Validate payload length
-        if payload.len() < (header.payload_len as usize) {
-            return None;
-        }
-
-        let (actual_payload, _) = payload.split_at(header.payload_len as usize);
-        Some((header, actual_payload))
-    }
-
-    pub fn calculate_checksum(&mut self, payload: &[u8]) {
-        self.checksum = 0;
-        // Safe: ReliableUdpHeader derives Pod
-        let header_bytes = bytemuck::bytes_of(self);
-
-        // Use platform-optimized CRC32 calculation (incremental to avoid allocation)
-        let mut crc = crc32::crc32_simd(header_bytes);
-        crc = crc32::crc32_incremental(crc, payload);
-        self.checksum = crc;
-    }
-    pub fn verify_checksum(&self, payload: &[u8]) -> bool {
-        let mut temp_header = *self;
-        temp_header.calculate_checksum(payload);
-        temp_header.checksum == self.checksum
-    }
-}
-
-impl TryFrom<u8> for MessageType {
-    type Error = ();
-
-    fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
-        match value {
-            0 => Ok(MessageType::Data),
-            1 => Ok(MessageType::Heartbeat),
-            2 => Ok(MessageType::Nak),
-            3 => Ok(MessageType::SessionStart),
-            4 => Ok(MessageType::SessionEnd),
-            5 => Ok(MessageType::Ack),
-            _ => Err(()),
-        }
-    }
-}
-
-/// Fully ring buffer-based reliable UDP transport (experimental)
+/// Fully ring buffer-based reliable UDP transport
 pub struct ReliableUdpRingBufferTransport {
     socket: std::sync::Arc<UdpSocket>,
     nak_socket: UdpSocket,
@@ -467,65 +339,6 @@ impl ReliableUdpRingBufferTransport {
         }
     }
 
-    pub fn receive(&mut self) -> Option<Box<[u8; 2048]>> {
-        let mut buf = [0u8; 2048];
-        match self.socket.recv_from(&mut buf) {
-            Ok((len, _src)) => {
-                let data = &buf[..len];
-
-                if len >= ReliableUdpHeader::SIZE {
-                    if let Some((header, payload)) =
-                        ReliableUdpHeader::from_packet_with_payload_check(data)
-                    {
-                        let msg_type = header.msg_type;
-                        let seq = header.sequence;
-                        if msg_type == (MessageType::Data as u8) {
-                            if header.verify_checksum(payload) {
-                                #[cfg(feature = "debug")]
-                                eprintln!(
-                                    "[RECV] Received DATA seq {} ({} bytes) from {}",
-                                    seq,
-                                    payload.len(),
-                                    src
-                                );
-                                self.recv_window.insert(seq, payload);
-                            } else {
-                                #[cfg(feature = "debug")]
-                                eprintln!("[RECV-ERROR] Checksum failed for seq {}", seq);
-                            }
-                        }
-                    }
-                }
-                // NAK backoff: don't send NAKs more than once per RTT
-                let nak_interval = std::time::Duration::from_micros(self.congestion.rtt_us().max(1000));
-                if self.last_nak_time.elapsed() >= nak_interval {
-                    self.recv_window.send_batch_naks_for_gaps(|start, end| {
-                        #[cfg(feature = "debug")]
-                        eprintln!("[RECV-GAP] Detected gap seq {}-{}, sending NAK", start, end);
-                        self.send_batch_nak(start, end);
-                    });
-                    self.last_nak_time = std::time::Instant::now();
-                }
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // No UDP data available, just fall through
-            }
-            Err(_e) => {
-                #[cfg(feature = "debug")]
-                eprintln!("[WARN] Socket error in receive: {}", _e);
-            }
-        }
-        let mut found = None;
-        self.recv_window.deliver_in_order_with(|msg| {
-            if found.is_none() {
-                let mut out_buf = Box::new([0u8; 2048]);
-                out_buf[..msg.len()].copy_from_slice(msg);
-                found = Some(out_buf);
-            }
-        });
-        found
-    }
-
     /// Queue a retransmit (paced - not sent immediately)
     pub fn queue_retransmit(&mut self, lost_seq: u64) {
         const MAX_PENDING: usize = 64;
@@ -580,17 +393,17 @@ impl ReliableUdpRingBufferTransport {
         packet.extend_from_slice(bytemuck::bytes_of(&header));
         packet.extend_from_slice(&payload);
 
-        #[cfg(feature = "debug")]
-        eprintln!(
+        
+        trace_debug!(
             "[NAK-SEND] Sending batch NAK for seq {}-{} to {}",
             start_seq, end_seq, self.remote_nak_addr
         );
         if let Err(_e) = self.nak_socket.send_to(&packet, self.remote_nak_addr) {
-            #[cfg(feature = "debug")]
-            eprintln!("[NAK-SEND-ERROR] Failed to send NAK: {}", _e);
+            
+            trace_warn!("[NAK-SEND-ERROR] Failed to send NAK: {}", _e);
         } else {
-            #[cfg(feature = "debug")]
-            eprintln!("[NAK-SEND-OK] Batch NAK sent successfully");
+            
+            trace_debug!("[NAK-SEND-OK] Batch NAK sent successfully");
         }
     }
 
@@ -601,8 +414,8 @@ impl ReliableUdpRingBufferTransport {
         // Safe: ReliableUdpHeader derives Pod
         let packet = bytemuck::bytes_of(&header);
 
-        #[cfg(feature = "debug")]
-        eprintln!(
+        
+        trace_debug!(
             "[ACK-SEND] Sending ACK for seq {} to {}",
             acked_seq, self.remote_nak_addr
         );
@@ -615,7 +428,7 @@ impl ReliableUdpRingBufferTransport {
 
         loop {
             match self.nak_socket.recv_from(&mut buf) {
-                Ok((len, _src)) => {
+                Ok((len, _)) => {
                     if len < ReliableUdpHeader::SIZE {
                         continue;
                     }
@@ -629,8 +442,8 @@ impl ReliableUdpRingBufferTransport {
                                 // Count newly acknowledged packets
                                 let newly_acked = acked.saturating_sub(self.acked_seq);
                                 
-                                #[cfg(feature = "debug")]
-                                eprintln!(
+                                
+                                trace_debug!(
                                     "[ACK-RECV] ACK seq {}, {} packets acked",
                                     acked, newly_acked
                                 );
@@ -679,9 +492,9 @@ impl ReliableUdpRingBufferTransport {
                     _nak_count += 1;
 
                     if len < ReliableUdpHeader::SIZE {
-                        #[cfg(feature = "debug")]
-                        eprintln!(
-                            "[NAK] Received invalid NAK (too short: {} bytes) from {}",
+                        
+                        trace_debug!(
+                            "[NAK] Received invalid NAK (too short: {} bytes) from {:?}",
                             len, _src
                         );
                         continue;
@@ -693,8 +506,8 @@ impl ReliableUdpRingBufferTransport {
                         let msg_type = header.msg_type;
 
                         if msg_type != (MessageType::Nak as u8) {
-                            #[cfg(feature = "debug")]
-                            eprintln!("[NAK] Received non-NAK message type: {}", msg_type);
+                            
+                            trace_debug!("[NAK] Received non-NAK message type: {}", msg_type);
                             continue;
                         }
 
@@ -702,10 +515,10 @@ impl ReliableUdpRingBufferTransport {
 
                         if payload.len() >= 16 && payload.len() % 16 == 0 {
                             let range_count = payload.len() / 16;
-                            #[cfg(feature = "debug")]
-                            eprintln!(
+                            
+                            trace_debug!(
                                 "[NAK] Received batch NAK from {} with {} ranges",
-                                src, range_count
+                                _src, range_count
                             );
 
                             for i in 0..range_count {
@@ -718,8 +531,8 @@ impl ReliableUdpRingBufferTransport {
                                 );
                                 let count = (end_seq - start_seq + 1) as usize;
 
-                                #[cfg(feature = "debug")]
-                                eprintln!(
+                                
+                                trace_debug!(
                                     "[NAK] Range {}: seq {}-{} ({} packets)",
                                     i, start_seq, end_seq, count
                                 );
@@ -727,25 +540,25 @@ impl ReliableUdpRingBufferTransport {
                                 _retransmit_count += count;
                             }
                         } else {
-                            #[cfg(feature = "debug")]
-                            eprintln!(
+                            
+                            trace_debug!(
                                 "[NAK] Received single NAK from {} for seq {}",
-                                src, sequence
+                                _src, sequence
                             );
                             self.retransmit(sequence);
                             _retransmit_count += 1;
                         }
                     } else {
-                        #[cfg(feature = "debug")]
-                        eprintln!("[NAK] Failed to parse NAK header");
+                        
+                        trace_debug!("[NAK] Failed to parse NAK header");
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     break;
                 }
                 Err(_e) => {
-                    #[cfg(feature = "debug")]
-                    eprintln!("[NAK] Socket error: {}", _e);
+                    
+                    trace_debug!("[NAK] Socket error: {}", _e);
                     break;
                 }
             }
@@ -789,7 +602,7 @@ impl ReliableUdpRingBufferTransport {
                 let mut n = 0;
                 for i in 0..max_recv {
                     match self.socket.recv_from(&mut bufs[i]) {
-                        Ok((len, _src)) => {
+                        Ok((len, _)) => {
                             lens[i] = len;
                             n += 1;
                         }
@@ -797,8 +610,8 @@ impl ReliableUdpRingBufferTransport {
                             break;
                         }
                         Err(_e) => {
-                            #[cfg(feature = "debug")]
-                            eprintln!("[ERR] Socket error: {}", _e);
+                            
+                            trace_warn!("[ERR] Socket error: {}", _e);
                             break;
                         }
                     }
