@@ -41,7 +41,8 @@ pub struct Archive {
 }
 
 impl Archive {
-    pub fn new<P: AsRef<Path>>(base_path: P, capacity: usize) -> Result<Self, ArchiveError> {
+    /// Create a new archive with background persistence.
+    pub fn create<P: AsRef<Path>>(base_path: P, capacity: usize) -> Result<Self, ArchiveError> {
         let path = base_path.as_ref().to_path_buf();
 
         let mut slots = Vec::with_capacity(RING_SIZE);
@@ -184,7 +185,7 @@ mod tests {
     #[test]
     fn test_archive() {
         let dir = tempdir().unwrap();
-        let mut archive = Archive::new(dir.path().join("test"), 1024 * 1024).unwrap();
+        let mut archive = Archive::create(dir.path().join("test"), 1024 * 1024).unwrap();
         for i in 0..100u64 {
             archive.append(&i.to_le_bytes()).unwrap();
         }

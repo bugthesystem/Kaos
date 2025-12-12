@@ -9,7 +9,7 @@
 //!                      └──► Recorder Thread (poll + archive)
 //! ```
 
-use crate::{FastHeader, ReliableUdpRingBufferTransport};
+use crate::{FastHeader, RudpTransport};
 use kaos::disruptor::{MessageRingBuffer, RingBufferConfig, RingBufferEntry};
 use kaos_archive::{ArchiveError, MmapArchive};
 use std::cell::UnsafeCell;
@@ -53,7 +53,7 @@ impl SpscBuffer {
 /// Uses a background thread to archive messages without blocking the hot path.
 /// Hot path cost: ~5ns (atomic store + memcpy to ring buffer slot)
 pub struct ArchivedTransport {
-    inner: ReliableUdpRingBufferTransport,
+    inner: RudpTransport,
     tap_buffer: Arc<SpscBuffer>,
     producer_seq: u64,
     archive: Arc<std::sync::Mutex<MmapArchive>>,
@@ -102,7 +102,7 @@ impl ArchivedTransport {
         archive_path: P,
         archive_capacity: usize,
     ) -> Result<Self, ArchivedError> {
-        let inner = ReliableUdpRingBufferTransport::new(local_addr, remote_addr, window_size)?;
+        let inner = RudpTransport::new(local_addr, remote_addr, window_size)?;
         let archive = MmapArchive::create(archive_path, archive_capacity)?;
 
         let config = RingBufferConfig::new(window_size)
@@ -311,7 +311,7 @@ impl ArchivedTransport {
             .saturating_sub(self.archived_seq.load(Ordering::Acquire))
     }
 
-    pub fn inner(&self) -> &ReliableUdpRingBufferTransport {
+    pub fn inner(&self) -> &RudpTransport {
         &self.inner
     }
 }

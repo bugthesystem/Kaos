@@ -14,7 +14,7 @@
 //! All transports implement `Transport` trait for composability:
 //!
 //! ```rust,ignore
-//! use kaos_rudp::{Transport, ReliableUdpRingBufferTransport};
+//! use kaos_rudp::{Transport, RudpTransport};
 //!
 //! fn send_messages<T: Transport>(transport: &mut T) {
 //!     transport.send(b"hello").unwrap();
@@ -89,8 +89,8 @@ use kaos::{record_backpressure, record_receive, record_retransmit, record_send};
 pub use multicast::{MulticastSocket, MulticastTransport};
 use window::BitmapWindow;
 
-/// Fully ring buffer-based reliable UDP transport
-pub struct ReliableUdpRingBufferTransport {
+/// Reliable UDP transport with ring buffer for retransmission.
+pub struct RudpTransport {
     socket: std::sync::Arc<UdpSocket>,
     nak_socket: UdpSocket,
     send_window: MessageRingBuffer,
@@ -130,7 +130,7 @@ impl Default for ReliableUdpConfig {
     }
 }
 
-impl ReliableUdpRingBufferTransport {
+impl RudpTransport {
     pub fn new(
         bind_addr: SocketAddr,
         remote_addr: SocketAddr,
@@ -746,14 +746,14 @@ impl ReliableUdpRingBufferTransport {
 }
 
 // Trait implementations for composability
-impl Transport for ReliableUdpRingBufferTransport {
+impl Transport for RudpTransport {
     fn send(&mut self, data: &[u8]) -> std::io::Result<u64> {
-        ReliableUdpRingBufferTransport::send(self, data)
+        RudpTransport::send(self, data)
     }
 
     fn receive<F: FnMut(&[u8])>(&mut self, mut handler: F) -> usize {
         let mut count = 0;
-        ReliableUdpRingBufferTransport::receive_batch_with(self, 64, |msg| {
+        RudpTransport::receive_batch_with(self, 64, |msg| {
             handler(msg);
             count += 1;
         });
@@ -761,13 +761,13 @@ impl Transport for ReliableUdpRingBufferTransport {
     }
 }
 
-impl BatchTransport for ReliableUdpRingBufferTransport {
+impl BatchTransport for RudpTransport {
     fn send_batch(&mut self, data: &[&[u8]]) -> std::io::Result<usize> {
-        ReliableUdpRingBufferTransport::send_batch(self, data)
+        RudpTransport::send_batch(self, data)
     }
 }
 
-impl Reliable for ReliableUdpRingBufferTransport {
+impl Reliable for RudpTransport {
     fn retransmit_pending(&mut self) -> std::io::Result<usize> {
         // NAK-based: retransmission triggered by receive
         Ok(0)

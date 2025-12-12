@@ -1,6 +1,7 @@
 //! AF_XDP kernel bypass networking
 
 use std::io;
+#[cfg(all(target_os = "linux", feature = "xdp"))]
 use std::num::NonZeroU32;
 
 /// XDP socket configuration

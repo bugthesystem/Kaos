@@ -349,8 +349,8 @@ fn run_reliable(
     to_app: &mut Publisher,
     running: &Arc<AtomicBool>,
 ) {
-    use kaos_rudp::ReliableUdpRingBufferTransport;
-    let mut transport = ReliableUdpRingBufferTransport::new(bind, peer, 65536).unwrap();
+    use kaos_rudp::RudpTransport;
+    let mut transport = RudpTransport::new(bind, peer, 65536).unwrap();
     let (mut sent, mut recvd, mut last) = (0u64, 0u64, Instant::now());
 
     while running.load(Ordering::Relaxed) {

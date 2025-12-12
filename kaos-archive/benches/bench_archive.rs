@@ -119,7 +119,7 @@ fn bench_throughput(c: &mut Criterion) {
         b.iter(|| {
             let dir = tempdir().unwrap();
             let path = dir.path().join("bench");
-            let mut archive = Archive::new(&path, 1024 * 1024 * 1024).unwrap();
+            let mut archive = Archive::create(&path, 1024 * 1024 * 1024).unwrap();
             for _ in 0..1_000_000 {
                 while archive.append(&msg).is_err() {
                     std::hint::spin_loop();

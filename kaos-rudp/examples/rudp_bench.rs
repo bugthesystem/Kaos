@@ -1,4 +1,4 @@
-use kaos_rudp::ReliableUdpRingBufferTransport;
+use kaos_rudp::RudpTransport;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
@@ -35,8 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("Expected sum: {}\n", expected_sum);
 
-    let mut server = ReliableUdpRingBufferTransport::new(server_addr, client_addr, window_size)?;
-    let mut client = ReliableUdpRingBufferTransport::new(client_addr, server_addr, window_size)?;
+    let mut server = RudpTransport::new(server_addr, client_addr, window_size)?;
+    let mut client = RudpTransport::new(client_addr, server_addr, window_size)?;
 
     let received_sum = Arc::new(AtomicU64::new(0));
     let received_count = Arc::new(AtomicU64::new(0));

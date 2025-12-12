@@ -5,9 +5,9 @@ Reliable UDP transport using kaos ring buffers.
 ## Usage
 
 ```rust
-use kaos_rudp::ReliableUdpRingBufferTransport;
+use kaos_rudp::RudpTransport;
 
-let mut transport = ReliableUdpRingBufferTransport::new(
+let mut transport = RudpTransport::new(
     "127.0.0.1:9000".parse()?,
     "127.0.0.1:9001".parse()?,
     65536

@@ -1,7 +1,7 @@
 //! RUDP benchmark - throughput and integrity tests
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use kaos_rudp::ReliableUdpRingBufferTransport;
+use kaos_rudp::RudpTransport;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -24,7 +24,7 @@ fn run_rudp_bench(total_events: u64) -> (f64, u64) {
 
     let receiver = thread::spawn(move || {
         let mut transport =
-            ReliableUdpRingBufferTransport::new(server_addr, client_addr, 65536).unwrap();
+            RudpTransport::new(server_addr, client_addr, 65536).unwrap();
         let mut count = 0u64;
         while count < total_events {
             transport.receive_batch_with(64, |data| {
@@ -40,7 +40,7 @@ fn run_rudp_bench(total_events: u64) -> (f64, u64) {
     let start = Instant::now();
 
     let mut transport =
-        ReliableUdpRingBufferTransport::new(client_addr, server_addr, 65536).unwrap();
+        RudpTransport::new(client_addr, server_addr, 65536).unwrap();
     let mut batch_data: [[u8; 8]; 16] = [[0u8; 8]; 16];
     let mut sent = 0u64;
 

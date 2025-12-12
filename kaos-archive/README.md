@@ -17,7 +17,7 @@ Persistent message archive with mmap.
 ```rust
 // High-throughput: fire-and-forget to background thread
 use kaos_archive::Archive;
-let mut archive = Archive::new("/tmp/log", 1_000_000_000)?;
+let mut archive = Archive::create("/tmp/log", 1_000_000_000)?;
 archive.append(b"hello")?; // Non-blocking
 archive.flush(); // Wait for persistence
 

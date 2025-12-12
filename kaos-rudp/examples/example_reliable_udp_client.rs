@@ -2,7 +2,7 @@
 //!
 //! Run: cargo run -p kaos-rudp --example example_reliable_udp_client
 
-use kaos_rudp::ReliableUdpRingBufferTransport;
+use kaos_rudp::RudpTransport;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client_addr: SocketAddr = "127.0.0.1:20002".parse()?;
     let server_addr: SocketAddr = "127.0.0.1:20001".parse()?;
 
-    let mut client = ReliableUdpRingBufferTransport::new(client_addr, server_addr, 4096)?;
+    let mut client = RudpTransport::new(client_addr, server_addr, 4096)?;
 
     println!("Client: {}", client_addr);
     println!("Server: {}", server_addr);

@@ -5,7 +5,7 @@
 
 #[cfg(feature = "reliable")]
 fn main() {
-    use kaos_rudp::ReliableUdpRingBufferTransport;
+    use kaos_rudp::RudpTransport;
     use std::net::SocketAddr;
     use std::thread;
     use std::time::Instant;
@@ -25,7 +25,7 @@ fn main() {
             let peer: SocketAddr = "127.0.0.1:19000".parse().unwrap(); // sender main
             println!("RUDP RECV {} ← {}", bind, peer);
 
-            let mut t = ReliableUdpRingBufferTransport::new(bind, peer, 65536).unwrap();
+            let mut t = RudpTransport::new(bind, peer, 65536).unwrap();
             let (mut recv, mut start): (u64, Option<Instant>) = (0, None);
 
             while recv < N {
@@ -56,7 +56,7 @@ fn main() {
             let peer: SocketAddr = "127.0.0.1:19010".parse().unwrap(); // receiver main
             println!("RUDP SEND {} → {}", bind, peer);
 
-            let mut t = ReliableUdpRingBufferTransport::new(bind, peer, 65536).unwrap();
+            let mut t = RudpTransport::new(bind, peer, 65536).unwrap();
             let data: Vec<[u8; 8]> = (0..64).map(|i| [i as u8; 8]).collect();
             let batch: Vec<&[u8]> = data.iter().map(|d| d.as_slice()).collect();
 
