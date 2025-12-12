@@ -128,7 +128,7 @@ impl MmapArchive {
 
     // ─── Append (safe) ───────────────────────────────────────────────────────
 
-    /// Append with CRC32 and index (safest, slowest).
+    /// Append with CRC32 + index (safe, ~10 M/s).
     #[inline]
     pub fn append(&mut self, data: &[u8]) -> Result<u64, ArchiveError> {
         self.append_inner(data, true, true)
@@ -325,8 +325,7 @@ impl MmapArchive {
     /// Replay messages in range [from, to) calling handler for each.
     /// Returns number of messages replayed.
     pub fn replay<F>(&self, from: u64, to: u64, mut handler: F) -> Result<u64, ArchiveError>
-    where
-        F: FnMut(u64, &[u8]),
+        where F: FnMut(u64, &[u8])
     {
         let end = to.min(self.msg_count);
         if from >= end {
@@ -419,10 +418,12 @@ mod tests {
         {
             let archive = MmapArchive::open(&path).unwrap();
             let mut replayed = Vec::new();
-            
-            archive.replay(10, 20, |seq, data| {
-                replayed.push((seq, String::from_utf8_lossy(data).to_string()));
-            }).unwrap();
+
+            archive
+                .replay(10, 20, |seq, data| {
+                    replayed.push((seq, String::from_utf8_lossy(data).to_string()));
+                })
+                .unwrap();
 
             assert_eq!(replayed.len(), 10);
             assert_eq!(replayed[0], (10, "event-10".to_string()));
