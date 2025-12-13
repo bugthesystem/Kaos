@@ -6,6 +6,7 @@ members = [
     "kaos-test-support",
     "kaos-driver",
     "kaos-archive",
+    "kaos-ws",
     "prototype/kaosnet"
 ]
 exclude = [
