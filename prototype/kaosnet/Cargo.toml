@@ -1,0 +1,36 @@
+[package]
+name = "kaosnet"
+version = "0.1.0-preview"
+edition = "2021"
+authors = ["Bug the System <bug.the.system.dev@gmail.com>"]
+description = "Game server built on kaos-rudp with Lua scripting"
+license = "MIT OR Apache-2.0"
+keywords = ["gameserver", "multiplayer", "lua", "udp", "networking"]
+categories = ["game-development", "network-programming"]
+
+[features]
+default = ["lua"]
+lua = ["mlua"]
+tracing = ["dep:tracing", "kaos-rudp/tracing"]
+
+[dependencies]
+kaos = { path = "../../kaos" }
+kaos-rudp = { path = "../../kaos-rudp" }
+bytemuck = { version = "1.14", features = ["derive"] }
+dashmap = "6"
+uuid = { version = "1", features = ["v4", "fast-rng"] }
+thiserror = "2"
+mlua = { version = "0.10", features = ["lua54", "vendored", "send"], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = { version = "0.1", optional = true }
+parking_lot = "0.12"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[example]]
+name = "echo_server"
+
+[[example]]
+name = "echo_client"
