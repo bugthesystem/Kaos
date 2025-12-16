@@ -170,6 +170,36 @@ impl SessionRegistry {
             .map(|r| *r.key())
             .collect()
     }
+
+    /// List all sessions as snapshots
+    pub fn list(&self) -> Vec<SessionSnapshot> {
+        self.sessions
+            .iter()
+            .map(|r| SessionSnapshot {
+                id: r.id,
+                addr: r.addr,
+                state: r.state,
+                user_id: r.user_id.clone(),
+                username: r.username.clone(),
+                room_id: r.room_id.clone(),
+                created_at: r.created_at,
+                last_heartbeat: r.last_heartbeat,
+            })
+            .collect()
+    }
+}
+
+/// Session snapshot for listing (avoids holding DashMap refs)
+#[derive(Debug, Clone)]
+pub struct SessionSnapshot {
+    pub id: u64,
+    pub addr: SocketAddr,
+    pub state: SessionState,
+    pub user_id: Option<String>,
+    pub username: Option<String>,
+    pub room_id: Option<String>,
+    pub created_at: Instant,
+    pub last_heartbeat: Instant,
 }
 
 impl Default for SessionRegistry {

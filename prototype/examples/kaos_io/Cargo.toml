@@ -15,7 +15,7 @@ name = "kaos-io-client"
 path = "src/client.rs"
 
 [dependencies]
-kaosnet = { path = "../../kaosnet", features = ["lua", "metrics", "auth"] }
+kaosnet = { path = "../../kaosnet", features = ["lua", "console", "metrics", "auth"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

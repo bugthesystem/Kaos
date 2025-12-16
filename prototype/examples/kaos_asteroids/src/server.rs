@@ -12,7 +12,9 @@
 use kaos_rudp::RudpServer;
 use kaosnet::{
     Leaderboards, LeaderboardConfig, SortOrder, ScoreOperator, ResetSchedule,
-    Storage, RoomRegistry, RoomConfig,
+    Storage, SessionRegistry, RoomRegistry, RoomConfig,
+    Chat, Matchmaker, Notifications, Social, Tournaments,
+    ConsoleServer, ConsoleConfig,
     // Authentication
     AuthService, DeviceAuthRequest,
     // Hooks
@@ -135,8 +137,7 @@ struct Bullet {
 
 struct Client {
     addr: SocketAddr,
-    /// Player ID (stored for future match handler)
-    _player_id: u64,
+    player_id: u64,
     #[allow(dead_code)]
     account_id: String,
     input: PlayerInput,
@@ -193,10 +194,16 @@ fn main() -> std::io::Result<()> {
     println!("    ║    Powered by KaosNet Services                     ║");
     println!("    ╚════════════════════════════════════════════════════╝\n");
 
-    // Initialize KaosNet services
+    // Initialize all KaosNet services
+    let sessions = Arc::new(SessionRegistry::new());
     let rooms = Arc::new(RoomRegistry::new());
     let leaderboards = Arc::new(Leaderboards::new());
     let storage = Arc::new(Storage::new());
+    let chat = Arc::new(Chat::new());
+    let matchmaker = Arc::new(Matchmaker::new());
+    let notifications = Arc::new(Notifications::new());
+    let social = Arc::new(Social::new());
+    let tournaments = Arc::new(Tournaments::new());
 
     // Initialize Authentication service
     let auth = Arc::new(AuthService::new("kaos-asteroids-secret-key"));
@@ -237,6 +244,29 @@ fn main() -> std::io::Result<()> {
     });
     println!("✓ Game room created: {}", game_room_id);
 
+    // Start Console API server in background thread
+    let console_sessions = Arc::clone(&sessions);
+    let console_rooms = Arc::clone(&rooms);
+
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        rt.block_on(async {
+            let mut config = ConsoleConfig::default();
+            config.bind_addr = "127.0.0.1:7353".to_string(); // Different port from kaos-io
+
+            let console = ConsoleServer::new(
+                config,
+                console_sessions,
+                console_rooms,
+            );
+
+            if let Err(e) = console.serve().await {
+                eprintln!("Console server error: {}", e);
+            }
+        });
+    });
+    println!("✓ Console API listening on http://0.0.0.0:7353");
+
     // Start RUDP server using kaos_rudp directly (with MessageRingBuffer per client)
     let mut server = RudpServer::bind("0.0.0.0:7352", 256)?;
     println!("✓ RUDP server listening on 0.0.0.0:7352");
@@ -244,14 +274,15 @@ fn main() -> std::io::Result<()> {
     println!();
     println!("Server Configuration:");
     println!("  RUDP Game: udp://0.0.0.0:7352");
+    println!("  Console:   http://0.0.0.0:7353");
     println!("  Tick Rate: {}Hz", TICK_RATE);
     println!("  World: {}x{}", WORLD_WIDTH, WORLD_HEIGHT);
     println!();
     println!("KaosNet Services:");
-    println!("  - Auth: Device authentication with JWT tokens");
     println!("  - Leaderboards: Track high scores across sessions");
     println!("  - Storage: Persist player profiles and stats");
     println!("  - Rooms: Multiplayer coordination");
+    println!("  - Console: Admin API (login: admin/admin)");
     println!();
     println!("Waiting for players... (use asteroids-client to connect)\n");
 
@@ -385,7 +416,7 @@ fn main() -> std::io::Result<()> {
                 addr_to_player.insert(addr, player_id);
                 clients.insert(player_id, Client {
                     addr,
-                    _player_id: player_id,
+                    player_id,
                     account_id,
                     input: PlayerInput::default(),
                 });
@@ -455,7 +486,7 @@ fn main() -> std::io::Result<()> {
                         })),
                     );
 
-                    // Save profile to storage
+                    // Save profile to storage with permission (PublicRead so others can see stats)
                     let _ = storage.set(
                         &user_id,
                         "profiles",

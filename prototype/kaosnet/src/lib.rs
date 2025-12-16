@@ -64,9 +64,9 @@ pub mod telemetry;
 // Re-exports - Core
 pub use error::{KaosNetError, Result};
 pub use protocol::{Message, Op};
-pub use room::{Room, RoomConfig, RoomRegistry, RoomState};
+pub use room::{Room, RoomConfig, RoomInfo, RoomRegistry, RoomSnapshot, RoomState};
 pub use server::{Server, ServerBuilder, ServerConfig};
-pub use session::{Presence, Session, SessionRegistry, SessionState};
+pub use session::{Presence, Session, SessionRegistry, SessionSnapshot, SessionState};
 pub use transport::{
     ClientId, ClientTransport, TransportServer,
     WsServerTransport, WsClientTransport,

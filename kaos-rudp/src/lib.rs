@@ -53,7 +53,6 @@ thread_local! {
 
 mod header;
 mod transport;
-pub mod server;
 
 #[cfg(feature = "archive")]
 pub mod archived;
@@ -62,6 +61,7 @@ pub mod congestion;
 pub mod driver;
 pub mod multicast;
 mod sendmmsg;
+pub mod server;
 mod window;
 
 pub use header::{FastHeader, MessageType, ReliableUdpHeader, FAST_HEADER_MAGIC, FLAG_NO_CRC};

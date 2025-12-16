@@ -173,6 +173,25 @@ impl RoomRegistry {
             .collect()
     }
 
+    /// List all rooms without limit (with full details)
+    pub fn list_all(&self) -> Vec<RoomSnapshot> {
+        self.rooms
+            .iter()
+            .map(|r| RoomSnapshot {
+                id: r.id.clone(),
+                config: r.config.clone(),
+                state: r.state,
+                player_count: r.player_count(),
+                created_at: r.created_at,
+            })
+            .collect()
+    }
+
+    /// Get total player count across all rooms
+    pub fn total_players(&self) -> usize {
+        self.rooms.iter().map(|r| r.player_count()).sum()
+    }
+
     pub fn join(&self, room_id: &str, session_id: u64) -> Result<(), JoinError> {
         let room = self.rooms.get(room_id).ok_or(JoinError::NotFound)?;
         if room.state != RoomState::Open {
@@ -220,7 +239,7 @@ pub enum JoinError {
     Closed,
 }
 
-/// Room listing info
+/// Room listing info (summary)
 #[derive(Debug, Clone)]
 pub struct RoomInfo {
     pub id: String,
@@ -228,6 +247,22 @@ pub struct RoomInfo {
     pub player_count: usize,
     pub max_players: usize,
     pub state: RoomState,
+}
+
+/// Room snapshot for detailed listing (includes all fields)
+#[derive(Debug, Clone)]
+pub struct RoomSnapshot {
+    pub id: String,
+    pub config: RoomConfig,
+    pub state: RoomState,
+    pub player_count: usize,
+    pub created_at: Instant,
+}
+
+impl RoomSnapshot {
+    pub fn player_count(&self) -> usize {
+        self.player_count
+    }
 }
 
 /// Match message (from players during tick)

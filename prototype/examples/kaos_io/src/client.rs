@@ -47,8 +47,7 @@ struct LeaderboardEntry {
 
 struct GameState {
     my_id: String,
-    /// Player name (stored for display)
-    _my_name: String,
+    my_name: String,
     players: Vec<Player>,
     food: Vec<Food>,
     leaderboard: Vec<LeaderboardEntry>,
@@ -64,7 +63,7 @@ impl GameState {
         let mut rng = rand::thread_rng();
         Self {
             my_id: "local".to_string(),
-            _my_name: name.to_string(),
+            my_name: name.to_string(),
             players: vec![Player {
                 id: "local".to_string(),
                 name: name.to_string(),

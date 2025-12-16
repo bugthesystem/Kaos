@@ -13,7 +13,7 @@ name = "asteroids-client"
 path = "src/client.rs"
 
 [dependencies]
-kaosnet = { path = "../../kaosnet", features = ["lua", "auth"] }
+kaosnet = { path = "../../kaosnet", features = ["lua", "console"] }
 kaos-rudp = { path = "../../../kaos-rudp" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 bytemuck = "1"

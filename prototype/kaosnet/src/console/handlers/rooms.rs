@@ -108,9 +108,9 @@ pub async fn get_room_state(req: Request, ctx: Arc<ServerContext>) -> Response {
     match ctx.rooms.get(id) {
         Some(room) => {
             // Return room's custom state as JSON (binary state as base64)
-            use base64::Engine;
+            use base64::prelude::*;
             let state_bytes = room.get_state();
-            let state_b64 = base64::engine::general_purpose::STANDARD.encode(&state_bytes);
+            let state_b64 = BASE64_STANDARD.encode(&state_bytes);
             Response::ok().json(&serde_json::json!({
                 "room_id": room.id,
                 "state": state_b64,

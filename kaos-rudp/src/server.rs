@@ -66,8 +66,8 @@ pub struct ClientState {
     last_seen: Instant,
     /// Connection open flag
     open: bool,
-    /// Client address (stored for debugging/logging)
-    _addr: SocketAddr,
+    /// Client address
+    addr: SocketAddr,
     /// NAK address (port + 1)
     nak_addr: SocketAddr,
     /// Window size
@@ -94,7 +94,7 @@ impl ClientState {
             acked_seq: 0,
             last_seen: Instant::now(),
             open: true,
-            _addr: addr,
+            addr,
             nak_addr,
             window_size,
         })
@@ -514,8 +514,7 @@ impl RudpServer {
 /// Client handle for easier per-client operations
 pub struct RudpServerClient {
     addr: SocketAddr,
-    /// Reserved for future batched receive
-    _recv_queue: Vec<Vec<u8>>,
+    recv_queue: Vec<Vec<u8>>,
 }
 
 impl RudpServerClient {
@@ -523,7 +522,7 @@ impl RudpServerClient {
     pub fn new(addr: SocketAddr) -> Self {
         Self {
             addr,
-            _recv_queue: Vec::new(),
+            recv_queue: Vec::new(),
         }
     }
 

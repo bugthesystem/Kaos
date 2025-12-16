@@ -8,29 +8,26 @@
 //! - Server hooks (before/after for storage and match events)
 //! - Storage with permissions (PublicRead for profiles)
 //! - Leaderboard service for persistent high scores
-//! - Prometheus metrics with /metrics endpoint
 //! - Room management
 
 use kaosnet::{
     RoomConfig, RoomRegistry, SessionRegistry,
     Leaderboards, LeaderboardConfig, SortOrder, ScoreOperator,
-    Storage, ObjectPermission,
+    Storage, Chat, Matchmaker, Notifications, Social, Tournaments,
     // Authentication
     AuthService, DeviceAuthRequest,
     // Hooks
     HookRegistry, HookOperation, HookContext, BeforeHook, AfterHook, BeforeHookResult,
     hooks::Result as HookResult,
+    // Console server
+    ConsoleServer, ConsoleConfig,
     // Unified transport from kaosnet
     WsServerTransport, WsClientTransport, TransportServer, ClientTransport,
-    // Metrics
-    Metrics,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::io::{Read as IoRead, Write as IoWrite};
-use std::net::TcpListener;
 
 /// Player state (internal - uses f64 for physics)
 #[derive(Debug, Clone)]
@@ -162,12 +159,11 @@ struct ClientInput {
 /// Connected client with authenticated user info
 struct Client {
     transport: WsClientTransport,
-    /// Player ID (stored for future use in match handler)
-    _player_id: u64,
+    player_id: u64,
     /// Authenticated user ID (from device auth)
     user_id: String,
-    /// Account ID from auth service (for storage/leaderboard)
-    _account_id: String,
+    /// Account ID from auth service
+    account_id: String,
     last_input: Option<ClientInput>,
 }
 
@@ -262,6 +258,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rooms = Arc::new(RoomRegistry::new());
     let leaderboards = Arc::new(Leaderboards::new());
     let storage = Arc::new(Storage::new());
+    let chat = Arc::new(Chat::new());
+    let matchmaker = Arc::new(Matchmaker::new());
+    let notifications = Arc::new(Notifications::new());
+    let social = Arc::new(Social::new());
+    let tournaments = Arc::new(Tournaments::new());
 
     // Initialize Authentication service with secret key
     let auth = Arc::new(AuthService::new("kaos-io-game-secret-key"));
@@ -307,7 +308,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("Server Configuration:");
     println!("  WebSocket: ws://0.0.0.0:7351");
-    println!("  Metrics:   http://0.0.0.0:9090/metrics");
+    println!("  Console:   http://0.0.0.0:7350");
     println!("  Tick Rate: {} Hz", TICK_RATE);
     println!("  World:     {}x{}", WORLD_WIDTH, WORLD_HEIGHT);
     println!();
@@ -317,45 +318,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - Leaderboards: Track high scores across sessions");
     println!("  - Storage: Persist profiles (PublicRead), server data (NoRead)");
     println!("  - Rooms: Multiplayer coordination");
-    println!("  - Metrics: Prometheus metrics");
+    println!("  - Console: Admin API (login: admin/admin)");
     println!();
+
+    // Start Console API server in background thread
+    let console_sessions = Arc::clone(&sessions);
+    let console_rooms = Arc::clone(&rooms);
+
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        rt.block_on(async {
+            let console_config = ConsoleConfig {
+                bind_addr: "0.0.0.0:7350".to_string(),
+                ..ConsoleConfig::default()
+            };
+            let console = ConsoleServer::new(
+                console_config,
+                console_sessions,
+                console_rooms,
+            );
+
+            if let Err(e) = console.serve().await {
+                eprintln!("Console server error: {}", e);
+            }
+        });
+    });
+    println!("✓ Console API listening on http://0.0.0.0:7350");
 
     // Start WebSocket server using kaosnet transport abstraction
     let mut ws_server = WsServerTransport::bind("0.0.0.0:7351")?;
     ws_server.set_nonblocking(true)?;
     println!("WebSocket server listening on 0.0.0.0:7351");
-
-    // Initialize Prometheus metrics
-    let metrics = Arc::new(Metrics::new());
-    let metrics_for_http = Arc::clone(&metrics);
-
-    // Start metrics HTTP server in background thread (port 9090)
-    std::thread::spawn(move || {
-        let listener = match TcpListener::bind("0.0.0.0:9090") {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("Failed to bind metrics server: {}", e);
-                return;
-            }
-        };
-        println!("✓ Metrics endpoint: http://0.0.0.0:9090/metrics");
-
-        for stream in listener.incoming() {
-            if let Ok(mut stream) = stream {
-                let mut buffer = [0; 1024];
-                if stream.read(&mut buffer).is_ok() {
-                    let output = metrics_for_http.gather();
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{}",
-                        output.len(),
-                        output
-                    );
-                    let _ = stream.write_all(response.as_bytes());
-                }
-            }
-        }
-    });
-
     println!("Waiting for players...\n");
 
     // Game state
@@ -365,7 +358,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut food_id: u32 = 0;
     let mut next_player_id: u64 = 1;
     let mut tick: u64 = 0;
-    let mut _total_players_ever: u64 = 0;
+    let mut total_players_ever: u64 = 0;
 
     // Spawn initial food
     spawn_food(&mut food, FOOD_COUNT, &mut food_id);
@@ -381,7 +374,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(Some(transport)) => {
                 let player_id = next_player_id;
                 next_player_id += 1;
-                _total_players_ever += 1;
+                total_players_ever += 1;
 
                 // Authenticate using device auth (creates account on first use)
                 let device_id = format!("device_{}", player_id);
@@ -459,15 +452,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("[+] {} joined (user={}, account={}, high_score={})",
                     player.name, user_id, account_id, high_score);
 
-                // Update metrics
-                metrics.sessions_total.inc();
-
                 players.insert(player_id, player);
                 clients.insert(player_id, Client {
                     transport,
-                    _player_id: player_id,
+                    player_id,
                     user_id,
-                    _account_id: account_id,
+                    account_id,
                     last_input: None,
                 });
 
@@ -555,8 +545,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         })),
                     ) {
                         eprintln!("Leaderboard submit error: {:?}", e);
-                    } else {
-                        metrics.leaderboard_submissions_total.inc();
                     }
                 }
 
@@ -583,8 +571,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 match hook_result {
                     Ok(validated_data) => {
-                        // Save profile to storage (permission set via collection defaults)
-                        if let Err(e) = storage.set(&user_id, "profiles", "main", validated_data) {
+                        if let Err(e) = storage.set(
+                            &user_id,
+                            "profiles",
+                            "main",
+                            validated_data,
+                        ) {
                             eprintln!("Storage save error: {:?}", e);
                         }
                     }
@@ -742,17 +734,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         tick += 1;
 
-        // Periodic status and metrics update (every 10 seconds)
-        if tick % (TICK_RATE as u64 * 10) == 0 {
-            // Update Prometheus metrics
-            metrics.sessions_active.set(clients.len() as i64);
-            metrics.rooms_active.set(rooms.count() as i64);
-            metrics.room_players.observe(players.len() as f64);
-
-            if !players.is_empty() {
-                let lb_count = leaderboards.count(LEADERBOARD_ID).unwrap_or(0);
-                println!("[tick {}] {} players online, {} on leaderboard", tick, players.len(), lb_count);
-            }
+        // Periodic status
+        if tick % (TICK_RATE as u64 * 10) == 0 && !players.is_empty() {
+            let lb_count = leaderboards.count(LEADERBOARD_ID).unwrap_or(0);
+            println!("[tick {}] {} players online, {} on leaderboard", tick, players.len(), lb_count);
         }
 
         // Sleep for remaining tick time
