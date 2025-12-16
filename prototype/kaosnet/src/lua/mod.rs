@@ -85,7 +85,8 @@ impl LuaVm {
 pub struct LuaRuntime {
     vms: Vec<Mutex<LuaVm>>,
     hooks: Arc<HookRegistry>,
-    api: Arc<LuaApi>,
+    /// API reference kept for future hot-reload support
+    _api: Arc<LuaApi>,
 }
 
 impl LuaRuntime {
@@ -103,7 +104,7 @@ impl LuaRuntime {
         let runtime = Self {
             vms,
             hooks,
-            api,
+            _api: api,
         };
 
         // Load scripts from path

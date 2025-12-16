@@ -53,6 +53,7 @@ thread_local! {
 
 mod header;
 mod transport;
+pub mod server;
 
 #[cfg(feature = "archive")]
 pub mod archived;
@@ -87,6 +88,7 @@ pub use congestion::CongestionController as Congestion;
 pub use driver::DriverTransport;
 use kaos::{record_backpressure, record_receive, record_retransmit, record_send};
 pub use multicast::{MulticastSocket, MulticastTransport};
+pub use server::{RudpServer, RudpServerClient};
 use window::BitmapWindow;
 
 /// Reliable UDP transport with ring buffer for retransmission.
@@ -108,9 +110,9 @@ pub struct RudpTransport {
     /// Pending retransmits (limited queue)
     retransmit_queue: std::collections::VecDeque<u64>,
     #[cfg(target_os = "linux")]
-    batch_sender: sendmmsg::BatchSender,
+    _batch_sender: sendmmsg::BatchSender,
     #[cfg(target_os = "linux")]
-    batch_receiver: sendmmsg::BatchReceiver,
+    _batch_receiver: sendmmsg::BatchReceiver,
 }
 
 #[derive(Debug, Clone)]
@@ -194,9 +196,9 @@ impl RudpTransport {
             last_nak_time: std::time::Instant::now(),
             retransmit_queue: std::collections::VecDeque::with_capacity(64),
             #[cfg(target_os = "linux")]
-            batch_sender: sendmmsg::BatchSender::new(64),
+            _batch_sender: sendmmsg::BatchSender::new(64),
             #[cfg(target_os = "linux")]
-            batch_receiver: sendmmsg::BatchReceiver::new(64, 65536),
+            _batch_receiver: sendmmsg::BatchReceiver::new(64, 65536),
         })
     }
 

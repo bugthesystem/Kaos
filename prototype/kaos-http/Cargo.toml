@@ -1,0 +1,38 @@
+[package]
+name = "kaos-http"
+version = "0.1.0-preview"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "HTTP/2 server for Kaos - minimal, fast, async"
+repository = "https://github.com/BugTheSysDev/Kaos"
+keywords = ["http", "http2", "server", "async"]
+categories = ["network-programming", "web-programming"]
+
+[features]
+default = []
+tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
+tracing = ["dep:tracing"]
+
+[dependencies]
+hyper = { version = "1", features = ["http1", "http2", "server"] }
+hyper-util = { version = "0.1", features = ["server", "tokio", "http1", "http2"] }
+http-body-util = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync"] }
+bytes = "1"
+thiserror = "2"
+http = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Optional TLS
+rustls = { version = "0.23", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+rustls-pemfile = { version = "2", optional = true }
+
+# Optional tracing
+tracing = { version = "0.1", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }

@@ -1,6 +1,6 @@
 //! # KaosNet
 //!
-//! Game server built on kaos-rudp with Lua scripting.
+//! A high-performance game server framework with Lua scripting.
 //!
 //! ## Features
 //!
@@ -8,40 +8,117 @@
 //! - **Rooms/Matches**: Multiplayer coordination with tick-based updates
 //! - **RPC**: Custom server functions callable from clients
 //! - **Lua Scripting**: Server-side logic via sandboxed Lua runtime
-//!
-//! ## Example
-//!
-//! ```rust,ignore
-//! use kaosnet::{Server, ServerBuilder};
-//!
-//! let server = ServerBuilder::new()
-//!     .bind("0.0.0.0:7350")
-//!     .tick_rate(60)
-//!     .lua_scripts("scripts")
-//!     .build()?;
-//!
-//! server.run()?;
-//! ```
+//! - **Storage**: Persistent key-value and document storage
+//! - **Leaderboards**: Score tracking with rankings
+//! - **Matchmaking**: Skill-based matchmaking with parties
+//! - **Social**: Friends, groups, and presence
+//! - **Notifications**: Real-time and persistent push notifications
+//! - **Tournaments**: Scheduled competitions with rankings
+//! - **Chat**: Real-time messaging with channels and DMs
 
+// Core modules (always available)
 pub mod error;
 pub mod peer;
 pub mod protocol;
 pub mod room;
 pub mod server;
 pub mod session;
+pub mod transport;
 
+// Game services (always available)
+pub mod chat;
+pub mod leaderboard;
+pub mod matchmaker;
+pub mod notifications;
+pub mod ratelimit;
+pub mod social;
+pub mod storage;
+pub mod tournament;
+
+// Hooks system (always available)
+pub mod hooks;
+
+// Match handler (always available)
+pub mod match_handler;
+
+// Auth (requires feature)
+#[cfg(feature = "auth")]
+pub mod auth;
+
+// Lua scripting (requires feature)
 #[cfg(feature = "lua")]
 pub mod lua;
 
-// Re-exports
+// Console admin (requires feature)
+#[cfg(feature = "console")]
+pub mod console;
+
+// Prometheus metrics (requires feature)
+#[cfg(feature = "metrics")]
+pub mod metrics;
+
+// OpenTelemetry tracing (requires feature)
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
+
+// Re-exports - Core
 pub use error::{KaosNetError, Result};
 pub use protocol::{Message, Op};
 pub use room::{Room, RoomConfig, RoomRegistry, RoomState};
 pub use server::{Server, ServerBuilder, ServerConfig};
 pub use session::{Presence, Session, SessionRegistry, SessionState};
+pub use transport::{
+    ClientId, ClientTransport, TransportServer,
+    WsServerTransport, WsClientTransport,
+};
 
+// Re-exports - Game Services
+pub use chat::{Chat, Channel, ChannelType, ChatMessage};
+pub use leaderboard::{Leaderboards, LeaderboardConfig, LeaderboardRecord, SortOrder, ScoreOperator, ResetSchedule};
+pub use matchmaker::{Matchmaker, MatchmakerConfig, MatchmakerTicket, MatchmakerMatch};
+pub use notifications::{Notifications, Notification, NotificationCode};
+pub use ratelimit::{RateLimiter, RateLimitConfig, RateLimitResult, OperationRateLimiter, RateLimitPresets};
+pub use social::{Social, Friend, FriendState, Group, GroupRole, PresenceStatus};
+pub use storage::{Storage, StorageObject, ObjectPermission, Query};
+pub use tournament::{Tournaments, Tournament, TournamentConfig, TournamentRecord, TournamentState};
+
+// Re-exports - Hooks
+pub use hooks::{
+    HookRegistry, HookExecutor, HookError,
+    HookOperation, HookContext,
+    BeforeHookResult, BeforeHook, AfterHook,
+};
+
+// Re-exports - Match Handler
+pub use match_handler::{
+    MatchHandler, MatchHandlerRegistry, MatchRegistry, MatchError,
+    MatchContext, MatchState, MatchInit, MatchMessage, MatchPresence,
+    MatchDispatcher, MatchLifecycle, Match,
+};
+
+// Re-exports - Auth (conditional)
+#[cfg(feature = "auth")]
+pub use auth::{
+    AuthService, AuthConfig, AuthError,
+    DeviceAuthRequest, EmailAuthRequest, CustomAuthRequest,
+    AuthResponse, UserAccountInfo,
+    LinkDeviceRequest, LinkEmailRequest,
+    UserAccount, AccountId, DeviceLink, AuthProvider,
+    AccountStore, MemoryAccountStore,
+    ClientToken, ClientClaims, RefreshToken,
+};
+
+// Re-exports - Lua (conditional)
 #[cfg(feature = "lua")]
 pub use lua::{LuaConfig, LuaContext, LuaRuntime};
+
+// Re-exports - Console (conditional)
+#[cfg(feature = "console")]
+pub use console::{ConsoleServer, ConsoleConfig};
+
+// Re-exports - Metrics (conditional)
+#[cfg(feature = "metrics")]
+pub use metrics::Metrics;
 
 #[cfg(test)]
 mod tests {

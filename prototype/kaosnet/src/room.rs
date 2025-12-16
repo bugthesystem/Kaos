@@ -147,7 +147,7 @@ impl RoomRegistry {
         true
     }
 
-    pub fn get(&self, id: &str) -> Option<dashmap::mapref::one::Ref<String, Room>> {
+    pub fn get(&self, id: &str) -> Option<dashmap::mapref::one::Ref<'_, String, Room>> {
         self.rooms.get(id)
     }
 

@@ -1,6 +1,9 @@
 //! sendmmsg/recvmmsg batch UDP I/O (Linux)
 //!
 //! 5-10x syscall reduction for bulk UDP.
+//! Note: These are prepared for future high-throughput optimization.
+
+#![allow(dead_code)]
 
 use std::io;
 use std::net::SocketAddr;
@@ -8,6 +11,7 @@ use std::net::SocketAddr;
 #[cfg(target_os = "linux")]
 use libc::{iovec, mmsghdr, recvmmsg, sendmmsg, sockaddr_in, AF_INET};
 #[cfg(target_os = "linux")]
+#[allow(unused_imports)]
 use std::os::unix::io::AsRawFd;
 
 #[cfg(target_os = "linux")]

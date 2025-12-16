@@ -116,11 +116,11 @@ impl SessionRegistry {
         id
     }
 
-    pub fn get(&self, id: u64) -> Option<dashmap::mapref::one::Ref<u64, Session>> {
+    pub fn get(&self, id: u64) -> Option<dashmap::mapref::one::Ref<'_, u64, Session>> {
         self.sessions.get(&id)
     }
 
-    pub fn get_mut(&self, id: u64) -> Option<dashmap::mapref::one::RefMut<u64, Session>> {
+    pub fn get_mut(&self, id: u64) -> Option<dashmap::mapref::one::RefMut<'_, u64, Session>> {
         self.sessions.get_mut(&id)
     }
 

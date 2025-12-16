@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+@theme {
+  --color-kaos-50: #f0f9ff;
+  --color-kaos-100: #e0f2fe;
+  --color-kaos-200: #bae6fd;
+  --color-kaos-300: #7dd3fc;
+  --color-kaos-400: #38bdf8;
+  --color-kaos-500: #0ea5e9;
+  --color-kaos-600: #0284c7;
+  --color-kaos-700: #0369a1;
+  --color-kaos-800: #075985;
+  --color-kaos-900: #0c4a6e;
+  --color-kaos-950: #082f49;
+}
+
+body {
+  @apply bg-gray-900 text-gray-100 m-0;
+}
+
+#root {
+  @apply min-h-screen;
+}
+
+.btn {
+  @apply px-4 py-2 rounded-lg font-medium transition-colors;
+}
+.btn:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+.btn-primary {
+  @apply bg-sky-600 text-white;
+}
+.btn-primary:hover {
+  @apply bg-sky-700;
+}
+.btn-secondary {
+  @apply bg-gray-700 text-white;
+}
+.btn-secondary:hover {
+  @apply bg-gray-600;
+}
+.btn-danger {
+  @apply bg-red-600 text-white;
+}
+.btn-danger:hover {
+  @apply bg-red-700;
+}
+.btn-sm {
+  @apply px-3 py-1.5 text-sm;
+}
+.card {
+  @apply bg-gray-800 rounded-xl p-6 shadow-lg;
+}
+.input {
+  @apply bg-gray-700 border border-gray-600 text-white rounded-lg px-4 py-2 w-full outline-hidden;
+}
+.input:focus {
+  @apply ring-2 ring-sky-500 border-transparent;
+}
+.stat-card {
+  @apply bg-gray-800 rounded-xl p-4 flex flex-col;
+}
+.stat-value {
+  @apply text-3xl font-bold text-white;
+}
+.stat-label {
+  @apply text-sm text-gray-400 mt-1;
+}
+.table-header {
+  @apply px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider;
+}
+.table-cell {
+  @apply px-4 py-3 text-sm text-gray-300;
+}
+.nav-link {
+  @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-gray-300 transition-colors;
+}
+.nav-link:hover {
+  @apply bg-gray-700 text-white;
+}
+.nav-link.active {
+  @apply bg-sky-600 text-white;
+}
+.badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+.badge-success {
+  @apply bg-green-900 text-green-300;
+}
+.badge-warning {
+  @apply bg-yellow-900 text-yellow-300;
+}
+.badge-danger {
+  @apply bg-red-900 text-red-300;
+}
+.badge-info {
+  @apply bg-sky-900 text-sky-300;
+}

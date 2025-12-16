@@ -7,7 +7,10 @@ members = [
     "kaos-driver",
     "kaos-archive",
     "kaos-ws",
-    "prototype/kaosnet"
+    "kaos-http",
+    "prototype/kaosnet",
+    "prototype/examples/kaos_io",
+    "prototype/examples/kaos_asteroids"
 ]
 exclude = [
     "ext-libs"

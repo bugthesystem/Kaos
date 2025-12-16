@@ -1,0 +1,89 @@
+# KaosNet Docker Compose
+#
+# Quick Start:
+#   make docker-up     # Start all services
+#   make docker-down   # Stop all services
+#   make docker-reset  # Reset and reseed
+#
+# Services:
+#   - kaos-io:  Game server (ws://localhost:7351, console http://localhost:7350)
+#   - web:      Static web client (http://localhost:8080)
+#   - postgres: Database (localhost:5432)
+#   - console:  Admin UI (http://localhost:3000)
+
+services:
+  # Kaos.io Game Server (WebSocket + Console API)
+  kaos-io:
+    build:
+      context: ../..
+      dockerfile: prototype/examples/kaos_io/Dockerfile
+    ports:
+      - "7350:7350"   # Console API
+      - "7351:7351"   # WebSocket game
+    environment:
+      - KAOS_ADMIN_PASSWORD=admin
+      - DATABASE_URL=postgres://kaos:kaos@postgres:5432/kaosnet
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - kaosnet
+
+  # Static web client
+  web:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ../examples/kaos_io/web:/usr/share/nginx/html:ro
+    depends_on:
+      - kaos-io
+    restart: unless-stopped
+    networks:
+      - kaosnet
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kaos
+      POSTGRES_PASSWORD: kaos
+      POSTGRES_DB: kaosnet
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./scripts/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kaos -d kaosnet"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - kaosnet
+
+  # Console UI (Admin Dashboard)
+  console:
+    build:
+      context: ../console-ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_URL=http://localhost:7350
+    depends_on:
+      - kaos-io
+    restart: unless-stopped
+    networks:
+      - kaosnet
+
+volumes:
+  postgres_data:
+
+networks:
+  kaosnet:
+    driver: bridge
