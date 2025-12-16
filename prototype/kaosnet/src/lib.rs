@@ -38,6 +38,9 @@ pub mod tournament;
 // Hooks system (always available)
 pub mod hooks;
 
+// Hooked service wrappers (always available)
+pub mod services;
+
 // Match handler (always available)
 pub mod match_handler;
 
@@ -89,6 +92,12 @@ pub use hooks::{
     BeforeHookResult, BeforeHook, AfterHook,
 };
 
+// Re-exports - Hooked Services
+pub use services::{
+    HookedStorage, HookedLeaderboards, HookedSocial,
+    ServiceError,
+};
+
 // Re-exports - Match Handler
 pub use match_handler::{
     MatchHandler, MatchHandlerRegistry, MatchRegistry, MatchError,
@@ -110,7 +119,7 @@ pub use auth::{
 
 // Re-exports - Lua (conditional)
 #[cfg(feature = "lua")]
-pub use lua::{LuaConfig, LuaContext, LuaRuntime};
+pub use lua::{LuaConfig, LuaContext, LuaRuntime, LuaMatchHandler, LuaServices};
 
 // Re-exports - Console (conditional)
 #[cfg(feature = "console")]

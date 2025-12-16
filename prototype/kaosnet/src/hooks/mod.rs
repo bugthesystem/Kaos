@@ -464,7 +464,6 @@ mod tests {
         let hook = CountingAfterHook {
             counter: std::sync::atomic::AtomicU32::new(0),
         };
-        let counter_ptr = &hook.counter as *const _;
         registry.register_after(HookOperation::LeaderboardSubmit, hook);
 
         let ctx = HookContext::default();

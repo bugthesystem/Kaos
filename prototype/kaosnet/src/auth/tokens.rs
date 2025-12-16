@@ -125,11 +125,13 @@ impl TokenService {
     }
 
     /// Get access token expiry in seconds.
+    #[allow(dead_code)]
     pub fn access_expiry_secs(&self) -> u64 {
         self.access_expiry_secs
     }
 
     /// Get refresh token expiry in seconds.
+    #[allow(dead_code)]
     pub fn refresh_expiry_secs(&self) -> u64 {
         self.refresh_expiry_secs
     }

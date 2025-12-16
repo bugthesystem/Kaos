@@ -376,7 +376,7 @@ fn main() -> std::io::Result<()> {
 
                 // Execute match join hook
                 let ctx = HookContext {
-                    user_id: Some(user_id.clone()),
+                    user_id: Some(user_id.to_string()),
                     username: Some(player_name.clone()),
                     session_id: Some(player_id),
                     client_ip: Some(addr.to_string()),

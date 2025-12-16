@@ -2,9 +2,11 @@
 
 mod api;
 mod hooks;
+mod match_adapter;
 
-pub use api::LuaApi;
+pub use api::{LuaApi, LuaServices};
 pub use hooks::{HookRegistry, HookType};
+pub use match_adapter::LuaMatchHandler;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -93,6 +95,33 @@ impl LuaRuntime {
     pub fn new(config: LuaConfig) -> Result<Self> {
         let hooks = Arc::new(HookRegistry::new());
         let api = Arc::new(LuaApi::new());
+
+        let mut vms = Vec::with_capacity(config.pool_size);
+        for _ in 0..config.pool_size {
+            let vm = LuaVm::new(hooks.clone())?;
+            vm.setup_api(&api)?;
+            vms.push(Mutex::new(vm));
+        }
+
+        let runtime = Self {
+            vms,
+            hooks,
+            _api: api,
+        };
+
+        // Load scripts from path
+        let script_path = Path::new(&config.script_path);
+        if script_path.exists() {
+            runtime.load_scripts(script_path)?;
+        }
+
+        Ok(runtime)
+    }
+
+    /// Create runtime with services (storage, leaderboards, social)
+    pub fn with_services(config: LuaConfig, services: Arc<LuaServices>) -> Result<Self> {
+        let hooks = Arc::new(HookRegistry::new());
+        let api = Arc::new(LuaApi::with_services(services));
 
         let mut vms = Vec::with_capacity(config.pool_size);
         for _ in 0..config.pool_size {

@@ -6,8 +6,8 @@ members = [
     "kaos-test-support",
     "kaos-driver",
     "kaos-archive",
-    "kaos-ws",
-    "kaos-http",
+    "prototype/kaos-ws",
+    "prototype/kaos-http",
     "prototype/kaosnet",
     "prototype/examples/kaos_io",
     "prototype/examples/kaos_asteroids"

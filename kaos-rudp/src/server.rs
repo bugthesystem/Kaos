@@ -107,6 +107,11 @@ impl ClientState {
     fn is_timed_out(&self, timeout: Duration) -> bool {
         self.last_seen.elapsed() > timeout
     }
+
+    /// Get client address
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
 }
 
 /// Multi-client Reliable UDP Server with kaos ring buffers
@@ -534,6 +539,30 @@ impl RudpServerClient {
     /// Get peer address (same as addr)
     pub fn peer_addr(&self) -> Option<SocketAddr> {
         Some(self.addr)
+    }
+
+    /// Push received data to the queue
+    pub fn push_recv(&mut self, data: Vec<u8>) {
+        self.recv_queue.push(data);
+    }
+
+    /// Pop received data from the queue
+    pub fn pop_recv(&mut self) -> Option<Vec<u8>> {
+        if self.recv_queue.is_empty() {
+            None
+        } else {
+            Some(self.recv_queue.remove(0))
+        }
+    }
+
+    /// Check if there's pending received data
+    pub fn has_pending(&self) -> bool {
+        !self.recv_queue.is_empty()
+    }
+
+    /// Get number of pending messages
+    pub fn pending_count(&self) -> usize {
+        self.recv_queue.len()
     }
 }
 

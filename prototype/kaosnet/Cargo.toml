@@ -19,8 +19,8 @@ auth = ["bcrypt", "jsonwebtoken", "sha2", "hex"]
 [dependencies]
 kaos = { path = "../../kaos" }
 kaos-rudp = { path = "../../kaos-rudp" }
-kaos-ws = { path = "../../kaos-ws" }
-kaos-http = { path = "../../kaos-http" }
+kaos-ws = { path = "../kaos-ws" }
+kaos-http = { path = "../kaos-http" }
 bytemuck = { version = "1.14", features = ["derive"] }
 dashmap = "6"
 uuid = { version = "1", features = ["v4", "fast-rng", "serde"] }

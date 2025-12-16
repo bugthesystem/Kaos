@@ -3,7 +3,7 @@
 use crate::console::auth::AuthService;
 use crate::console::handlers;
 use crate::console::storage::{AccountStore, ApiKeyStore};
-use crate::ratelimit::{RateLimiter, RateLimitConfig, RateLimitPresets};
+use crate::ratelimit::{RateLimiter, RateLimitPresets};
 use crate::room::RoomRegistry;
 use crate::session::SessionRegistry;
 use kaos_http::middleware::{CorsMiddleware, LoggingMiddleware, Middleware, Next};
@@ -64,9 +64,9 @@ impl ConsoleServer {
         if accounts.list().is_empty() {
             use crate::console::auth::Role;
             accounts.create("admin", "admin", Role::Admin);
-            #[cfg(not(feature = "tracing"))]
+            #[cfg(not(feature = "telemetry"))]
             eprintln!("Created default admin account: admin/admin");
-            #[cfg(feature = "tracing")]
+            #[cfg(feature = "telemetry")]
             tracing::warn!("Created default admin account: admin/admin");
         }
 
@@ -404,7 +404,7 @@ impl Middleware for RateLimitMiddleware {
             }
 
             // Add rate limit headers to response
-            let mut response = next.run(req).await;
+            let response = next.run(req).await;
 
             // Note: In a real implementation, we'd add these headers:
             // X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset

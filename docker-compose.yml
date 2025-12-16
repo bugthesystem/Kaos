@@ -30,7 +30,7 @@ services:
   # Console UI
   console:
     build:
-      context: ./console-ui
+      context: ./prototype/console-ui
       dockerfile: Dockerfile
     ports:
       - "3000:80"

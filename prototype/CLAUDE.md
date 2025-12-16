@@ -228,15 +228,15 @@ transport.process_acks();  // Maintains reliability
 ## Running Tests
 
 ```bash
-# All kaosnet tests (56 tests)
+# All kaosnet tests (85 tests)
 cargo test -p kaosnet
 
-# kaos-rudp tests (23 tests including RudpServer)
+# kaos-rudp tests
 cargo test -p kaos-rudp
 
 # Specific crate
-cargo test -p kaos-ws
-cargo test -p kaos-http
+cargo test -p kaos-ws   # 5 tests
+cargo test -p kaos-http # 16 unit + 16 integration tests
 ```
 
 ## Building
@@ -290,10 +290,12 @@ Ports:
 - [x] Client authentication (device, email, custom)
 - [x] Server hooks (before/after hooks for all operations)
 
-### Console UI (100%)
+### Console UI (95%)
 - [x] All 16 pages created and routed
 - [x] Authentication flow
 - [x] API client with generic methods
+- [x] Real API integration on 15/16 pages
+- [ ] Players page uses sample data (API integration pending)
 
 ### Demo Game (100%)
 - [x] Working WebSocket server (via kaosnet transport)
@@ -425,6 +427,23 @@ hooks.register_after(HookOperation::SessionConnect, Box::new(|ctx, payload| {
 }));
 ```
 
+### Hooked Services (Hooks + Services Wired Together)
+```rust
+use kaosnet::{HookedStorage, HookedLeaderboards, HookedSocial, HookRegistry, HookContext};
+
+// Create services with hook integration
+let registry = Arc::new(HookRegistry::new());
+let storage = Arc::new(Storage::new());
+let hooked_storage = HookedStorage::new(storage, registry.clone());
+
+// All operations now invoke before/after hooks automatically
+let ctx = HookContext { user_id: Some("alice".into()), ..Default::default() };
+hooked_storage.set(&ctx, "alice", "saves", "slot1", json!({"level": 5}))?;
+
+// Hooks can reject or modify operations
+registry.register_before(HookOperation::StorageWrite, MyValidationHook);
+```
+
 ### Match Handler (Authoritative Multiplayer)
 ```rust
 use kaosnet::{MatchHandler, MatchRegistry, LuaMatchHandler};
@@ -460,19 +479,35 @@ storage.write_as("user1", "user1", "profiles", "main",     // OK if owner
     json!({"level": 6}), ObjectPermission::OwnerOnly)?;
 ```
 
-### Lua API (Storage & Leaderboards)
+### Lua API (Storage, Leaderboards, Social)
 ```lua
 -- Storage
-local profile = kaos.storage_get("user123", "profiles", "main")
-kaos.storage_set("user123", "profiles", "main", {level = 5, xp = 1200})
+local obj = kaos.storage_read("user123", "profiles", "main")
+kaos.storage_write("user123", "profiles", "main", {level = 5, xp = 1200})
 kaos.storage_delete("user123", "profiles", "main")
 local items = kaos.storage_list("user123", "inventory", 100)
 
 -- Leaderboards
+kaos.leaderboard_create("weekly", "Weekly Scores", "descending", "best")
 kaos.leaderboard_submit("weekly", "user123", "PlayerOne", 5000, {kills = 42})
-local top10 = kaos.leaderboard_get_top("weekly", 10)
-local around = kaos.leaderboard_get_around("weekly", "user123", 5)
-local record = kaos.leaderboard_get_record("weekly", "user123")
+local top10 = kaos.leaderboard_list("weekly", 10)
+local around = kaos.leaderboard_around("weekly", "user123", 5)
+local record = kaos.leaderboard_record("weekly", "user123")
+
+-- Social: Friends
+local friend = kaos.friends_add("alice", "bob", "Bob")
+local friends = kaos.friends_list("alice")
+kaos.friends_remove("alice", "bob")
+
+-- Social: Groups
+local group = kaos.group_create("alice", "Alice", "Cool Group", "A cool group", true)
+kaos.group_join(group.id, "bob", "Bob")
+kaos.group_leave(group.id, "bob")
+local members = kaos.group_members(group.id)
+
+-- Social: Presence
+kaos.presence_update("alice", "Alice", "online", "Playing game")
+local presence = kaos.presence_get("alice")
 ```
 
 ### Lua Match Handler
@@ -577,7 +612,22 @@ Shared functions in `console/utils.rs`:
     - Fixed light/dark theme support across all pages
     - Added logo.svg with glowing cyberpunk design
     - Extended JWT token expiry to 7 days (was 1 hour)
-24. Added Prometheus metrics observability:
+24. Wired Lua API to all services (Phase 1 complete):
+    - 18 new Lua functions: storage_read/write/delete/list, leaderboard_create/submit/list/around/record, friends_add/list/remove, group_create/join/leave/members, presence_update/get
+    - 8 new tests for Lua API integration
+    - LuaServices struct for passing services to Lua runtime
+25. Created hooked service wrappers (Phase 2 complete):
+    - HookedStorage: storage operations with before/after hooks
+    - HookedLeaderboards: leaderboard operations with hooks
+    - HookedSocial: social operations with hooks
+    - Hooks can reject/modify operations before execution
+    - 6 new tests for hooked services
+26. Created LuaMatchHandler (Phase 3 complete):
+    - Implements MatchHandler trait from match_handler module
+    - Calls Lua functions: match_init, match_join, match_leave, match_loop, match_terminate
+    - Integrates with MatchRegistry for full Nakama-style authoritative multiplayer
+    - 4 new tests for Lua match handler
+27. Added Prometheus metrics observability:
     - Full metrics module with `metrics` feature flag
     - `/metrics` endpoint on console server (no auth, for Prometheus scraping)
     - Metrics: uptime, sessions, rooms, HTTP requests, response codes
@@ -636,7 +686,7 @@ After running `make seed` or `make docker-up`, you get:
 | `prototype/kaosnet/src/ratelimit.rs` | Token bucket rate limiter + presets |
 | `prototype/examples/kaos_io/src/server.rs` | Full demo with metrics + tracing |
 | `kaos-rudp/src/server.rs` | Multi-client RUDP server |
-| `kaos-http/src/response.rs` | HTTP response helpers (inc. too_many_requests) |
+| `prototype/kaos-http/src/response.rs` | HTTP response helpers (inc. too_many_requests) |
 
 ## Code Patterns
 
