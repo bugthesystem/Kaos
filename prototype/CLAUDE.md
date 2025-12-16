@@ -2,6 +2,38 @@
 
 A high-performance multiplayer game server framework in Rust.
 
+## Current Status (Dec 2024)
+
+**All core features complete. Ready for Cluster Mode implementation.**
+
+### Recently Completed (This Session)
+- ✅ Fixed all build issues (RoomSnapshot, SessionSnapshot, console handlers)
+- ✅ Integrated Prometheus metrics into kaos-io (`/metrics` on port 9090)
+- ✅ Added rate limiting to Console API (strict for auth, standard for API)
+- ✅ Wired tracing/telemetry with `tracing-subscriber`
+
+### Next Up: CLUSTER MODE
+This is the big one. Research needed:
+1. **Nakama Clustering**: How does Nakama handle distributed state?
+2. **Raft Consensus**: For leader election and distributed state
+3. **etcd/Consul**: For service discovery
+4. **Redis Pub/Sub**: For cross-node messaging
+
+Implementation plan:
+1. Node discovery and registration
+2. Distributed session registry (which node owns which session)
+3. Distributed room registry (room can span multiple nodes?)
+4. Cross-node message routing
+5. Leader election for global state
+6. Graceful node join/leave
+
+### Server Endpoints (kaos-io)
+| Port | Service | Description |
+|------|---------|-------------|
+| 7351 | WebSocket | Game server (real-time) |
+| 7350 | Console | Admin API (JWT auth, rate limited) |
+| 9090 | Metrics | Prometheus scrape endpoint |
+
 ## Quick Start
 
 ```bash
@@ -591,3 +623,41 @@ After running `make seed` or `make docker-up`, you get:
 - 3 groups (Elite Gamers, Casual Crew, Speed Run Masters)
 - Leaderboard entries for kaos_io_highscores, weekly_scores, asteroids_highscores
 - Sample storage objects, friends, notifications, tournaments
+
+## Key Files Reference
+
+| File | Purpose |
+|------|---------|
+| `prototype/kaosnet/src/lib.rs` | All exports, feature gates |
+| `prototype/kaosnet/src/room.rs` | RoomRegistry, RoomSnapshot, list_all() |
+| `prototype/kaosnet/src/session.rs` | SessionRegistry, SessionSnapshot, list() |
+| `prototype/kaosnet/src/console/server.rs` | Console API + RateLimitMiddleware |
+| `prototype/kaosnet/src/metrics.rs` | Prometheus metrics (sessions, rooms, storage) |
+| `prototype/kaosnet/src/ratelimit.rs` | Token bucket rate limiter + presets |
+| `prototype/examples/kaos_io/src/server.rs` | Full demo with metrics + tracing |
+| `kaos-rudp/src/server.rs` | Multi-client RUDP server |
+| `kaos-http/src/response.rs` | HTTP response helpers (inc. too_many_requests) |
+
+## Code Patterns
+
+### Snapshot Pattern
+Used for safely iterating over concurrent DashMap collections:
+```rust
+pub fn list_all(&self) -> Vec<RoomSnapshot> {
+    self.rooms.iter().map(|r| RoomSnapshot {
+        id: r.id.clone(),
+        config: r.config.clone(),
+        state: r.state,
+        player_count: r.player_count(),
+        created_at: r.created_at,
+    }).collect()
+}
+```
+
+### Rate Limit Presets
+```rust
+RateLimitPresets::strict()    // 5 req/s - auth endpoints
+RateLimitPresets::standard()  // 100 req/s - general API
+RateLimitPresets::relaxed()   // 500 req/s - read-heavy
+RateLimitPresets::realtime()  // 60 req/s - game updates
+```
