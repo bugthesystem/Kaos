@@ -63,6 +63,11 @@ impl Response {
         Self::new(StatusCode::METHOD_NOT_ALLOWED)
     }
 
+    /// 429 Too Many Requests
+    pub fn too_many_requests() -> Self {
+        Self::new(StatusCode::TOO_MANY_REQUESTS)
+    }
+
     /// 500 Internal Server Error
     pub fn internal_error() -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR)

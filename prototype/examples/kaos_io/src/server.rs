@@ -23,6 +23,8 @@ use kaosnet::{
     ConsoleServer, ConsoleConfig,
     // Unified transport from kaosnet
     WsServerTransport, WsClientTransport, TransportServer, ClientTransport,
+    // Metrics
+    Metrics,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -237,6 +239,20 @@ fn distance(x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing/logging
+    // RUST_LOG=kaos_io=debug,kaosnet=info for verbose output
+    use tracing_subscriber::{fmt, EnvFilter};
+    fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info"))
+        )
+        .with_target(true)
+        .compact()
+        .init();
+
+    tracing::info!("Kaos.io server starting...");
+
     println!(r#"
     ╔═══════════════════════════════════════════════════════════════╗
     ║                                                               ║
@@ -253,16 +269,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ╚═══════════════════════════════════════════════════════════════╝
     "#);
 
+    // Initialize Prometheus metrics
+    let metrics = Arc::new(Metrics::new());
+    println!("✓ Metrics initialized");
+
     // Initialize KaosNet services
     let sessions = Arc::new(SessionRegistry::new());
     let rooms = Arc::new(RoomRegistry::new());
     let leaderboards = Arc::new(Leaderboards::new());
     let storage = Arc::new(Storage::new());
-    let chat = Arc::new(Chat::new());
-    let matchmaker = Arc::new(Matchmaker::new());
-    let notifications = Arc::new(Notifications::new());
-    let social = Arc::new(Social::new());
-    let tournaments = Arc::new(Tournaments::new());
+    let _chat = Arc::new(Chat::new());
+    let _matchmaker = Arc::new(Matchmaker::new());
+    let _notifications = Arc::new(Notifications::new());
+    let _social = Arc::new(Social::new());
+    let _tournaments = Arc::new(Tournaments::new());
 
     // Initialize Authentication service with secret key
     let auth = Arc::new(AuthService::new("kaos-io-game-secret-key"));
@@ -309,6 +329,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Server Configuration:");
     println!("  WebSocket: ws://0.0.0.0:7351");
     println!("  Console:   http://0.0.0.0:7350");
+    println!("  Metrics:   http://0.0.0.0:9090/metrics");
     println!("  Tick Rate: {} Hz", TICK_RATE);
     println!("  World:     {}x{}", WORLD_WIDTH, WORLD_HEIGHT);
     println!();
@@ -319,6 +340,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - Storage: Persist profiles (PublicRead), server data (NoRead)");
     println!("  - Rooms: Multiplayer coordination");
     println!("  - Console: Admin API (login: admin/admin)");
+    println!("  - Metrics: Prometheus endpoint for observability");
     println!();
 
     // Start Console API server in background thread
@@ -344,6 +366,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     });
     println!("✓ Console API listening on http://0.0.0.0:7350");
+
+    // Start Metrics HTTP server in background thread (Prometheus scrape endpoint)
+    let metrics_clone = Arc::clone(&metrics);
+    std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("0.0.0.0:9090").expect("Failed to bind metrics server");
+        for stream in listener.incoming() {
+            if let Ok(mut stream) = stream {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+
+                // Simple HTTP response with metrics
+                let body = metrics_clone.gather();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: text/plain; version=0.0.4\r\n\
+                     Content-Length: {}\r\n\
+                     \r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        }
+    });
+    println!("✓ Metrics endpoint on http://0.0.0.0:9090/metrics");
 
     // Start WebSocket server using kaosnet transport abstraction
     let mut ws_server = WsServerTransport::bind("0.0.0.0:7351")?;
@@ -460,6 +510,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     account_id,
                     last_input: None,
                 });
+
+                // Update metrics
+                metrics.sessions_total.inc();
 
                 if let Some(room) = rooms.get(&game_room_id) {
                     let _ = room.add_player(player_id);
@@ -733,6 +786,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         tick += 1;
+
+        // Update metrics every tick
+        metrics.sessions_active.set(clients.len() as i64);
+        metrics.websocket_connections.set(clients.len() as i64);
+        metrics.rooms_active.set(rooms.count() as i64);
 
         // Periodic status
         if tick % (TICK_RATE as u64 * 10) == 0 && !players.is_empty() {

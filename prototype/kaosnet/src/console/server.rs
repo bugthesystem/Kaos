@@ -3,6 +3,7 @@
 use crate::console::auth::AuthService;
 use crate::console::handlers;
 use crate::console::storage::{AccountStore, ApiKeyStore};
+use crate::ratelimit::{RateLimiter, RateLimitConfig, RateLimitPresets};
 use crate::room::RoomRegistry;
 use crate::session::SessionRegistry;
 use kaos_http::middleware::{CorsMiddleware, LoggingMiddleware, Middleware, Next};
@@ -96,6 +97,7 @@ impl ConsoleServer {
             .router(router)
             .middleware(LoggingMiddleware)
             .middleware(CorsMiddleware::permissive())
+            .middleware(RateLimitMiddleware::new())  // Rate limiting before auth
             .middleware(AuthMiddleware::new(
                 Arc::clone(&self.ctx.auth),
                 self.config.allow_public_status,
@@ -341,6 +343,72 @@ impl Middleware for AuthMiddleware {
                     }))
                 }
             }
+        })
+    }
+}
+
+/// Rate limiting middleware for console API.
+struct RateLimitMiddleware {
+    /// Limiter for auth endpoints (stricter)
+    auth_limiter: RateLimiter,
+    /// Limiter for general API endpoints
+    api_limiter: RateLimiter,
+}
+
+impl RateLimitMiddleware {
+    fn new() -> Self {
+        Self {
+            // Strict rate limit for login (5 req/sec, 3 burst) to prevent brute force
+            auth_limiter: RateLimiter::new(RateLimitPresets::strict()),
+            // Standard rate limit for other API endpoints (100 req/sec)
+            api_limiter: RateLimiter::new(RateLimitPresets::standard()),
+        }
+    }
+
+    fn get_client_id(req: &Request) -> String {
+        // Use IP address as client identifier for rate limiting
+        req.headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+}
+
+impl Middleware for RateLimitMiddleware {
+    fn handle<'a>(
+        &'a self,
+        req: Request,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
+        Box::pin(async move {
+            let path = req.path();
+            let client_id = Self::get_client_id(&req);
+
+            // Select limiter based on path
+            let limiter = if path.starts_with("/api/auth/") {
+                &self.auth_limiter
+            } else {
+                &self.api_limiter
+            };
+
+            // Check rate limit
+            let result = limiter.check_with_info(&client_id);
+
+            if !result.allowed {
+                return Response::too_many_requests().json(&serde_json::json!({
+                    "error": "rate limit exceeded",
+                    "retry_after_ms": result.reset_after_ms,
+                    "limit": result.limit
+                }));
+            }
+
+            // Add rate limit headers to response
+            let mut response = next.run(req).await;
+
+            // Note: In a real implementation, we'd add these headers:
+            // X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+            response
         })
     }
 }
