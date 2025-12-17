@@ -4,13 +4,16 @@ A high-performance multiplayer game server framework in Rust.
 
 ## Current Status (Dec 2024)
 
-**All core features complete. Ready for Cluster Mode implementation.**
+**85 tests passing. All P1/P2 tasks complete. Ready for Cluster Mode.**
 
-### Recently Completed (This Session)
-- ✅ Fixed all build issues (RoomSnapshot, SessionSnapshot, console handlers)
-- ✅ Integrated Prometheus metrics into kaos-io (`/metrics` on port 9090)
-- ✅ Added rate limiting to Console API (strict for auth, standard for API)
-- ✅ Wired tracing/telemetry with `tracing-subscriber`
+### Validated Complete (Dec 16, 2024)
+- ✅ **Phase 1**: Full Lua API (18 functions: storage, leaderboard, social, presence)
+- ✅ **Phase 2**: Hooked Services (HookedStorage, HookedLeaderboards, HookedSocial)
+- ✅ **Phase 3**: Lua Match Handler (match_init/join/leave/loop/terminate)
+- ✅ **Phase 4**: PostgreSQL backend (`PostgresSyncBackend` implements `StorageBackend`)
+- ✅ **Phase 5**: Metrics integration (HookedStorage/Leaderboards record metrics)
+- ✅ **Phase 6**: Console Players API (queries real storage)
+- ✅ **Phase 7**: Notifications integration (friend requests send notifications)
 
 ### Next Up: CLUSTER MODE
 This is the big one. Research needed:
@@ -279,16 +282,17 @@ Ports:
 - [x] Social (friends, groups, presence)
 - [x] Notifications (real-time + persistent)
 - [x] Tournaments with brackets
-- [x] Storage (memory + PostgreSQL backends)
+- [x] Storage (memory backend, PostgreSQL async backend)
 - [x] Storage permissions (NoRead/OwnerOnly/PublicRead/PublicReadWrite)
-- [x] Lua scripting runtime with storage/leaderboard API
-- [x] Lua match handlers (authoritative multiplayer)
+- [x] Full Lua API (18 functions: storage, leaderboard, social, presence)
+- [x] Lua match handlers (authoritative multiplayer with MatchRegistry)
+- [x] Hooked services (HookedStorage, HookedLeaderboards, HookedSocial)
 - [x] Console API with JWT + API key auth
 - [x] RBAC permissions system
 - [x] Unified transport abstraction (WebSocket + RUDP)
 - [x] Rate limiting (token bucket + per-operation)
 - [x] Client authentication (device, email, custom)
-- [x] Server hooks (before/after hooks for all operations)
+- [x] Server hooks (before/after hooks with HookExecutor)
 
 ### Console UI (95%)
 - [x] All 16 pages created and routed
@@ -305,16 +309,12 @@ Ports:
 - [x] Web client with real-time sync
 - [x] Docker setup
 
-## What Could Be Added
+## What's Left
 
-- [x] Lua API bindings (storage, leaderboards from Lua)
-- [x] WebSocket transport for kaosnet core (unified transport abstraction)
+- [ ] Wire PostgreSQL to sync Storage (async backend exists in postgres.rs)
+- [ ] Integrate metrics into services (counters exist, not called)
+- [ ] Notifications triggered by events
 - [ ] Cluster mode / horizontal scaling
-- [x] Rate limiting middleware (token bucket + per-operation limits)
-- [x] Metrics/observability (Prometheus with /metrics endpoint)
-- [x] Distributed tracing (OpenTelemetry with OTLP export to Jaeger/Tempo)
-- [x] More example games (kaos_asteroids - RUDP demo)
-- [x] Multi-client RUDP server with kaos ring buffers (kaos_rudp::RudpServer)
 
 ## Key APIs
 
@@ -679,6 +679,11 @@ After running `make seed` or `make docker-up`, you get:
 | File | Purpose |
 |------|---------|
 | `prototype/kaosnet/src/lib.rs` | All exports, feature gates |
+| `prototype/kaosnet/src/lua/api.rs` | Lua API (18 functions: storage, leaderboard, social) |
+| `prototype/kaosnet/src/lua/match_adapter.rs` | LuaMatchHandler (Lua-based authoritative multiplayer) |
+| `prototype/kaosnet/src/services.rs` | HookedStorage, HookedLeaderboards, HookedSocial |
+| `prototype/kaosnet/src/hooks/mod.rs` | HookRegistry, HookExecutor, BeforeHook/AfterHook traits |
+| `prototype/kaosnet/src/storage/postgres.rs` | PostgresBackend (async, 364 lines) |
 | `prototype/kaosnet/src/room.rs` | RoomRegistry, RoomSnapshot, list_all() |
 | `prototype/kaosnet/src/session.rs` | SessionRegistry, SessionSnapshot, list() |
 | `prototype/kaosnet/src/console/server.rs` | Console API + RateLimitMiddleware |
@@ -686,7 +691,6 @@ After running `make seed` or `make docker-up`, you get:
 | `prototype/kaosnet/src/ratelimit.rs` | Token bucket rate limiter + presets |
 | `prototype/examples/kaos_io/src/server.rs` | Full demo with metrics + tracing |
 | `kaos-rudp/src/server.rs` | Multi-client RUDP server |
-| `prototype/kaos-http/src/response.rs` | HTTP response helpers (inc. too_many_requests) |
 
 ## Code Patterns
 

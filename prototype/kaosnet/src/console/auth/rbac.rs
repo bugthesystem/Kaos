@@ -55,16 +55,27 @@ impl Role {
     /// Check if role has permission.
     pub fn has_permission(&self, permission: Permission) -> bool {
         match permission {
+            // View permissions - everyone has these
             Permission::ViewStatus => true,
             Permission::ViewSessions => true,
             Permission::ViewRooms => true,
             Permission::ViewLua => true,
             Permission::ViewConfig => true,
+            // Action permissions - Developer and Admin
             Permission::KickSession => matches!(self, Role::Admin | Role::Developer),
             Permission::TerminateRoom => matches!(self, Role::Admin | Role::Developer),
             Permission::ExecuteRpc => matches!(self, Role::Admin | Role::Developer),
+            // Management permissions - Admin only
             Permission::ManageAccounts => matches!(self, Role::Admin),
             Permission::ManageApiKeys => matches!(self, Role::Admin),
+            Permission::ManagePlayers => matches!(self, Role::Admin | Role::Developer),
+            Permission::ManageLeaderboards => matches!(self, Role::Admin | Role::Developer),
+            Permission::ManageTournaments => matches!(self, Role::Admin | Role::Developer),
+            Permission::ManageStorage => matches!(self, Role::Admin | Role::Developer),
+            Permission::ManageSocial => matches!(self, Role::Admin | Role::Developer),
+            Permission::ManageChat => matches!(self, Role::Admin | Role::Developer),
+            Permission::ManageMatchmaker => matches!(self, Role::Admin | Role::Developer),
+            Permission::ManageNotifications => matches!(self, Role::Admin | Role::Developer),
         }
     }
 
@@ -91,16 +102,27 @@ impl Role {
 /// Permissions for actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Permission {
+    // View permissions (Viewer role)
     ViewStatus,
     ViewSessions,
     ViewRooms,
     ViewLua,
     ViewConfig,
+    // Action permissions (Developer role)
     KickSession,
     TerminateRoom,
     ExecuteRpc,
+    // Management permissions (Admin role)
     ManageAccounts,
     ManageApiKeys,
+    ManagePlayers,
+    ManageLeaderboards,
+    ManageTournaments,
+    ManageStorage,
+    ManageSocial,
+    ManageChat,
+    ManageMatchmaker,
+    ManageNotifications,
 }
 
 #[cfg(test)]

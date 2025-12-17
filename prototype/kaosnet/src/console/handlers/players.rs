@@ -4,11 +4,17 @@
 
 use crate::console::auth::{Identity, Permission};
 use crate::console::server::ServerContext;
-use crate::console::utils::get_pagination;
 use crate::storage::Query;
 use kaos_http::{Request, Response};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+/// Get pagination parameters from request.
+fn get_pagination(req: &Request) -> (usize, usize) {
+    let page: usize = req.query_param("page").and_then(|p| p.parse().ok()).unwrap_or(1);
+    let page_size: usize = req.query_param("page_size").and_then(|p| p.parse().ok()).unwrap_or(20);
+    (page, page_size)
+}
 
 #[derive(Debug, Serialize)]
 pub struct PlayerAccount {

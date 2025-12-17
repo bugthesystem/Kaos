@@ -3,10 +3,11 @@
 //! A multiplayer Asteroids game demonstrating kaos-rudp transport.
 //!
 //! Features:
+//! - **Lua scripting** - ALL game logic in Lua (scripts/game.lua)
 //! - 60Hz game loop using kaos_rudp::RudpServer (MessageRingBuffer per client)
 //! - Player ships with thrust, rotation, shooting
 //! - Asteroids that split when destroyed
-//! - Leaderboard integration for high scores
+//! - Leaderboard integration for high scores (accessible from Lua)
 
 // Use kaos_rudp directly for proper per-client reliability
 use kaos_rudp::RudpServer;
@@ -20,31 +21,26 @@ use kaosnet::{
     // Hooks
     HookRegistry, HookOperation, HookContext, BeforeHook, AfterHook, BeforeHookResult,
     hooks::Result as HookResult,
+    // Hooked Services
+    HookedStorage, HookedLeaderboards,
+    // Lua runtime and match handler
+    LuaConfig, LuaRuntime, LuaMatchHandler, LuaServices,
+    // Match system
+    MatchHandlerRegistry, MatchRegistry, MatchPresence, MatchMessage,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::f64::consts::PI;
 use std::time::{Duration, Instant};
 
-// Game constants
+// Game constants (also in Lua, kept for server reference)
 const TICK_RATE: u64 = 60;
 const TICK_DURATION: Duration = Duration::from_micros(1_000_000 / TICK_RATE);
-const WORLD_WIDTH: f64 = 100.0;
-const WORLD_HEIGHT: f64 = 50.0;
-const SHIP_RADIUS: f64 = 1.5;
-const BULLET_RADIUS: f64 = 0.3;
-const BULLET_SPEED: f64 = 50.0;
-const BULLET_LIFETIME: f64 = 2.0;
-const SHIP_THRUST: f64 = 20.0;
-const SHIP_ROTATION_SPEED: f64 = 4.0;
-const SHIP_DRAG: f64 = 0.98;
-const ASTEROID_SPEED: f64 = 8.0;
-const INITIAL_ASTEROIDS: usize = 5;
 const LEADERBOARD_ID: &str = "asteroids_highscore";
+const LUA_MODULE_NAME: &str = "kaos_asteroids";
 
-// Protocol messages
+// Protocol messages (for RUDP client communication)
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 enum ClientMessage {
@@ -57,90 +53,15 @@ enum ClientMessage {
 #[serde(tag = "type")]
 enum ServerMessage {
     Welcome { player_id: u64 },
-    GameState { state: GameState },
-    PlayerDied { player_id: u64, score: i64, killer: String },
-    GameOver { score: i64, rank: Option<usize> },
+    GameState { state: serde_json::Value },  // State comes from Lua as JSON
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct GameState {
-    tick: u64,
-    ships: Vec<ShipState>,
-    asteroids: Vec<AsteroidState>,
-    bullets: Vec<BulletState>,
-    leaderboard: Vec<LeaderboardEntry>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct ShipState {
-    id: u64,
-    name: String,
-    x: f64,
-    y: f64,
-    angle: f64,
-    score: i64,
-    alive: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct AsteroidState {
-    id: u64,
-    x: f64,
-    y: f64,
-    size: u8, // 3=large, 2=medium, 1=small
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct BulletState {
-    x: f64,
-    y: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct LeaderboardEntry {
-    name: String,
-    score: i64,
-}
-
-// Internal game objects
-struct Ship {
-    id: u64,
-    name: String,
-    x: f64,
-    y: f64,
-    vx: f64,
-    vy: f64,
-    angle: f64,
-    score: i64,
-    alive: bool,
-    respawn_timer: f64,
-    fire_cooldown: f64,
-}
-
-struct Asteroid {
-    id: u64,
-    x: f64,
-    y: f64,
-    vx: f64,
-    vy: f64,
-    size: u8,
-}
-
-struct Bullet {
-    owner_id: u64,
-    x: f64,
-    y: f64,
-    vx: f64,
-    vy: f64,
-    lifetime: f64,
-}
-
+// Client connection tracking (game state is managed by Lua)
 struct Client {
     addr: SocketAddr,
-    player_id: u64,
-    #[allow(dead_code)]
-    account_id: String,
-    input: PlayerInput,
+    session_id: u64,
+    user_id: String,
+    username: String,
 }
 
 // ==================== Hook Implementations ====================
@@ -180,14 +101,6 @@ impl AfterHook for MatchLeaveLogHook {
     }
 }
 
-#[derive(Default)]
-struct PlayerInput {
-    thrust: bool,
-    left: bool,
-    right: bool,
-    fire: bool,
-}
-
 fn main() -> std::io::Result<()> {
     println!("\n  ╔════════════════════════════════════════════════════╗");
     println!("    ║    KAOS ASTEROIDS - RUDP Multiplayer Demo          ║");
@@ -197,8 +110,8 @@ fn main() -> std::io::Result<()> {
     // Initialize all KaosNet services
     let sessions = Arc::new(SessionRegistry::new());
     let rooms = Arc::new(RoomRegistry::new());
-    let leaderboards = Arc::new(Leaderboards::new());
     let storage = Arc::new(Storage::new());
+    let leaderboards = Arc::new(Leaderboards::new());
     let chat = Arc::new(Chat::new());
     let matchmaker = Arc::new(Matchmaker::new());
     let notifications = Arc::new(Notifications::new());
@@ -222,6 +135,11 @@ fn main() -> std::io::Result<()> {
     hooks.register_after(HookOperation::MatchLeave, MatchLeaveLogHook);
     println!("✓ Hooks registered (storage validation, match join/leave logging)");
 
+    // Create hooked service wrappers for storage and leaderboards
+    let _hooked_storage = Arc::new(HookedStorage::new(Arc::clone(&storage), Arc::clone(&hooks)));
+    let _hooked_leaderboards = Arc::new(HookedLeaderboards::new(Arc::clone(&leaderboards), Arc::clone(&hooks)));
+    println!("✓ Hooked services initialized");
+
     // Create high scores leaderboard
     leaderboards.create(LeaderboardConfig {
         id: LEADERBOARD_ID.to_string(),
@@ -235,6 +153,39 @@ fn main() -> std::io::Result<()> {
     println!("✓ Leaderboard service initialized");
     println!("✓ Storage service initialized");
 
+    // ==================== Lua Runtime Setup ====================
+    // Create LuaServices for Lua script access to storage/leaderboards
+    let lua_services = Arc::new(LuaServices::new(
+        Arc::clone(&storage),
+        Arc::clone(&leaderboards),
+        Arc::clone(&social),
+    ));
+
+    // Create Lua runtime with services
+    let script_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts");
+    let lua_config = LuaConfig {
+        pool_size: 2,
+        script_path: script_path.to_string_lossy().to_string(),
+    };
+    let lua_runtime = LuaRuntime::with_services(lua_config, Arc::clone(&lua_services))
+        .expect("Failed to create Lua runtime");
+    let lua_runtime = Arc::new(lua_runtime);
+    println!("✓ Lua runtime initialized (scripts loaded from {:?})", script_path);
+
+    // Create Lua match handler
+    let lua_handler = LuaMatchHandler::new(Arc::clone(&lua_runtime), LUA_MODULE_NAME);
+
+    // Register handler and create match registry
+    let match_handlers = Arc::new(MatchHandlerRegistry::new());
+    match_handlers.register(LUA_MODULE_NAME, lua_handler);
+    let match_registry = Arc::new(MatchRegistry::new(match_handlers));
+
+    // Create the main game match (Lua handles all game logic)
+    let game_match_id = match_registry
+        .create(LUA_MODULE_NAME, serde_json::json!({}), None)
+        .expect("Failed to create game match");
+    println!("✓ Lua game match created: {} (module={})", game_match_id, LUA_MODULE_NAME);
+
     // Create the main game room
     let game_room_id = rooms.create(RoomConfig {
         max_players: 20,
@@ -244,9 +195,16 @@ fn main() -> std::io::Result<()> {
     });
     println!("✓ Game room created: {}", game_room_id);
 
-    // Start Console API server in background thread
+    // Start Console API server in background thread with all services
     let console_sessions = Arc::clone(&sessions);
     let console_rooms = Arc::clone(&rooms);
+    let console_storage = Arc::clone(&storage);
+    let console_leaderboards = Arc::clone(&leaderboards);
+    let console_tournaments = Arc::clone(&tournaments);
+    let console_social = Arc::clone(&social);
+    let console_chat = Arc::clone(&chat);
+    let console_matchmaker = Arc::clone(&matchmaker);
+    let console_notifications = Arc::clone(&notifications);
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
@@ -254,18 +212,23 @@ fn main() -> std::io::Result<()> {
             let mut config = ConsoleConfig::default();
             config.bind_addr = "127.0.0.1:7353".to_string(); // Different port from kaos-io
 
-            let console = ConsoleServer::new(
-                config,
-                console_sessions,
-                console_rooms,
-            );
+            // Use builder to wire all services to console
+            let console = ConsoleServer::builder(config, console_sessions, console_rooms)
+                .storage(console_storage)
+                .leaderboards(console_leaderboards)
+                .tournaments(console_tournaments)
+                .social(console_social)
+                .chat(console_chat)
+                .matchmaker(console_matchmaker)
+                .notifications(console_notifications)
+                .build();
 
             if let Err(e) = console.serve().await {
                 eprintln!("Console server error: {}", e);
             }
         });
     });
-    println!("✓ Console API listening on http://0.0.0.0:7353");
+    println!("✓ Console API listening on http://0.0.0.0:7353 (all services wired)");
 
     // Start RUDP server using kaos_rudp directly (with MessageRingBuffer per client)
     let mut server = RudpServer::bind("0.0.0.0:7352", 256)?;
@@ -276,33 +239,26 @@ fn main() -> std::io::Result<()> {
     println!("  RUDP Game: udp://0.0.0.0:7352");
     println!("  Console:   http://0.0.0.0:7353");
     println!("  Tick Rate: {}Hz", TICK_RATE);
-    println!("  World: {}x{}", WORLD_WIDTH, WORLD_HEIGHT);
+    println!("  Lua Script: scripts/game.lua");
     println!();
-    println!("KaosNet Services:");
-    println!("  - Leaderboards: Track high scores across sessions");
-    println!("  - Storage: Persist player profiles and stats");
-    println!("  - Rooms: Multiplayer coordination");
+    println!("KaosNet Features Demonstrated:");
+    println!("  - Lua Scripting: ALL game logic in scripts/game.lua");
+    println!("  - RUDP Transport: Reliable UDP with per-client sequencing");
+    println!("  - Leaderboards: Track high scores (accessible from Lua)");
+    println!("  - Storage: Persist player profiles");
+    println!("  - Match Handler: Lua-based match lifecycle");
     println!("  - Console: Admin API (login: admin/admin)");
     println!();
     println!("Waiting for players... (use asteroids-client to connect)\n");
 
-    // Game state
+    // Client tracking (game state is managed by Lua)
     let mut clients: HashMap<u64, Client> = HashMap::new();
-    let mut addr_to_player: HashMap<SocketAddr, u64> = HashMap::new();
-    let mut ships: HashMap<u64, Ship> = HashMap::new();
-    let mut asteroids: Vec<Asteroid> = Vec::new();
-    let mut bullets: Vec<Bullet> = Vec::new();
-    let mut next_player_id: u64 = 1;
-    let mut next_asteroid_id: u64 = 1;
+    let mut addr_to_session: HashMap<SocketAddr, u64> = HashMap::new();
+    let mut next_session_id: u64 = 1;
     let mut tick: u64 = 0;
 
     // Pending join messages (addr -> name)
     let mut pending_joins: HashMap<SocketAddr, String> = HashMap::new();
-
-    // Spawn initial asteroids
-    for _ in 0..INITIAL_ASTEROIDS {
-        asteroids.push(spawn_asteroid(&mut next_asteroid_id, 3));
-    }
 
     let mut last_tick = Instant::now();
     let mut last_status = Instant::now();
@@ -313,10 +269,10 @@ fn main() -> std::io::Result<()> {
         // Poll server (receive packets, manage clients)
         server.poll();
 
-        // Accept new connections
+        // ==================== Accept New Connections ====================
         while let Some(addr) = server.accept() {
             // New client connected, wait for Join message
-            pending_joins.insert(addr, format!("Player{}", next_player_id));
+            pending_joins.insert(addr, format!("Player{}", next_session_id));
         }
 
         // Process pending joins - receive Join messages
@@ -336,8 +292,8 @@ fn main() -> std::io::Result<()> {
 
             if got_join {
                 pending_joins.remove(&addr);
-                let player_id = next_player_id;
-                next_player_id += 1;
+                let session_id = next_session_id;
+                next_session_id += 1;
 
                 // Authenticate player using device ID (address as unique identifier)
                 let device_id = format!("rudp_{}", addr);
@@ -347,96 +303,113 @@ fn main() -> std::io::Result<()> {
                     username: Some(name.clone()),
                 };
 
-                let (user_id, account_id, player_name) = match auth.authenticate_device(&auth_request) {
+                let (user_id, username) = match auth.authenticate_device(&auth_request) {
                     Ok(auth_response) => {
                         let uid = auth_response.account.id.clone();
-                        let acc_id = auth_response.account.id.clone();
-                        let pname = auth_response.account.username.clone().unwrap_or(name.clone());
-                        println!("[auth] Device authenticated: {} -> account {}", device_id, acc_id);
-                        (uid, acc_id, pname)
+                        let uname = auth_response.account.username.clone().unwrap_or(name.clone());
+                        println!("[auth] Device authenticated: {} -> {}", device_id, uid);
+                        (uid, uname)
                     }
                     Err(e) => {
                         println!("[auth] Auth failed, using fallback: {}", e);
-                        let fallback = format!("ast_{}", player_id);
-                        (fallback.clone(), fallback, name.clone())
+                        let fallback = format!("ast_{}", session_id);
+                        (fallback, name.clone())
                     }
                 };
-
-                // Try to load player profile from storage
-                let high_score = match storage.get(&user_id, "profiles", "main") {
-                    Ok(Some(obj)) => {
-                        obj.value.get("high_score")
-                            .and_then(|h| h.as_i64())
-                            .unwrap_or(0)
-                    }
-                    _ => 0,
-                };
-
-                println!("[+] {} joined (id={}, account={}, high_score={}) from {}", player_name, player_id, account_id, high_score, addr);
 
                 // Execute match join hook
-                let ctx = HookContext {
-                    user_id: Some(user_id.to_string()),
-                    username: Some(player_name.clone()),
-                    session_id: Some(player_id),
+                let hook_ctx = HookContext {
+                    user_id: Some(user_id.clone()),
+                    username: Some(username.clone()),
+                    session_id: Some(session_id),
                     client_ip: Some(addr.to_string()),
                     vars: std::collections::HashMap::new(),
                 };
                 let _ = hooks.execute_after(
                     HookOperation::MatchJoin,
-                    &ctx,
-                    &serde_json::json!({ "player_name": player_name, "high_score": high_score }),
+                    &hook_ctx,
+                    &serde_json::json!({ "player_name": username }),
                     &serde_json::json!({}),
                 );
 
+                // Join the Lua match - this triggers match_join in Lua
+                let presence = MatchPresence {
+                    user_id: user_id.clone(),
+                    session_id,
+                    username: username.clone(),
+                    node: None,
+                };
+                if let Err(e) = match_registry.join(&game_match_id, presence) {
+                    eprintln!("[!] Failed to join match: {:?}", e);
+                    continue;
+                }
+
                 // Send welcome
-                let welcome = ServerMessage::Welcome { player_id };
+                let welcome = ServerMessage::Welcome { player_id: session_id };
                 let _ = server.send(&addr, &serde_json::to_vec(&welcome).unwrap());
 
-                // Create ship
-                ships.insert(player_id, Ship {
-                    id: player_id,
-                    name: player_name.clone(),
-                    x: WORLD_WIDTH / 2.0 + (player_id as f64 * 5.0) % WORLD_WIDTH,
-                    y: WORLD_HEIGHT / 2.0,
-                    vx: 0.0,
-                    vy: 0.0,
-                    angle: 0.0,
-                    score: 0,
-                    alive: true,
-                    respawn_timer: 0.0,
-                    fire_cooldown: 0.0,
-                });
+                println!("[+] {} joined (session={}, user={}) from {}", username, session_id, user_id, addr);
 
                 // Add player to game room
                 if let Some(room) = rooms.get(&game_room_id) {
-                    let _ = room.add_player(player_id);
+                    let _ = room.add_player(session_id);
                 }
 
-                addr_to_player.insert(addr, player_id);
-                clients.insert(player_id, Client {
+                addr_to_session.insert(addr, session_id);
+                clients.insert(session_id, Client {
                     addr,
-                    player_id,
-                    account_id,
-                    input: PlayerInput::default(),
+                    session_id,
+                    user_id,
+                    username,
                 });
             }
         }
 
-        // Process client inputs
+        // ==================== Process Client Messages ====================
         let mut disconnected = Vec::new();
-        for (id, client) in &mut clients {
+        for (session_id, client) in &clients {
             // Check if client still connected
             if !server.has_client(&client.addr) {
-                disconnected.push(*id);
+                disconnected.push(*session_id);
                 continue;
             }
+
+            let session_id_copy = *session_id;
+            let user_id = client.user_id.clone();
+            let username = client.username.clone();
+            let match_registry_ref = &match_registry;
+            let game_match_id_ref = &game_match_id;
 
             server.receive(&client.addr, |data| {
                 if let Ok(msg) = serde_json::from_slice::<ClientMessage>(data) {
                     match msg {
                         ClientMessage::Input { thrust, left, right, fire } => {
-                            client.input = PlayerInput { thrust, left, right, fire };
+                            // Forward input to Lua match as MatchMessage
+                            let presence = MatchPresence {
+                                user_id: user_id.clone(),
+                                session_id: session_id_copy,
+                                username: username.clone(),
+                                node: None,
+                            };
+
+                            let input_data = serde_json::json!({
+                                "thrust": thrust,
+                                "left": left,
+                                "right": right,
+                                "fire": fire
+                            });
+
+                            let message = MatchMessage {
+                                sender: presence,
+                                op_code: 1,
+                                data: serde_json::to_vec(&input_data).unwrap_or_default(),
+                                reliable: true,
+                                received_at: tick,
+                            };
+
+                            if let Err(e) = match_registry_ref.send_message(game_match_id_ref, message) {
+                                eprintln!("[!] Failed to send message to match: {:?}", e);
+                            }
                         }
                         ClientMessage::Leave => {
                             // Will be handled in disconnected
@@ -447,278 +420,61 @@ fn main() -> std::io::Result<()> {
             });
         }
 
-        // Remove disconnected clients
-        for id in disconnected {
-            if let Some(client) = clients.remove(&id) {
-                addr_to_player.remove(&client.addr);
+        // ==================== Handle Disconnections ====================
+        for session_id in disconnected {
+            if let Some(client) = clients.remove(&session_id) {
+                addr_to_session.remove(&client.addr);
                 server.disconnect(&client.addr);
-                if let Some(ship) = ships.remove(&id) {
-                    let user_id = client.account_id.clone();
-                    println!("[-] {} left (score: {}, account: {})", ship.name, ship.score, user_id);
 
-                    // Execute match leave hook
-                    let leave_ctx = HookContext {
-                        user_id: Some(user_id.clone()),
-                        username: Some(ship.name.clone()),
-                        session_id: Some(id),
-                        client_ip: Some(client.addr.to_string()),
-                        vars: std::collections::HashMap::new(),
-                    };
-                    let _ = hooks.execute_after(
-                        HookOperation::MatchLeave,
-                        &leave_ctx,
-                        &serde_json::json!({
-                            "final_score": ship.score,
-                            "asteroids_destroyed": 0,
-                            "player_name": ship.name
-                        }),
-                        &serde_json::json!({}),
-                    );
+                // Execute match leave hook
+                let leave_ctx = HookContext {
+                    user_id: Some(client.user_id.clone()),
+                    username: Some(client.username.clone()),
+                    session_id: Some(session_id),
+                    client_ip: Some(client.addr.to_string()),
+                    vars: std::collections::HashMap::new(),
+                };
+                let _ = hooks.execute_after(
+                    HookOperation::MatchLeave,
+                    &leave_ctx,
+                    &serde_json::json!({ "session_id": session_id }),
+                    &serde_json::json!({}),
+                );
 
-                    // Submit to leaderboard
-                    let _ = leaderboards.submit(
-                        LEADERBOARD_ID,
-                        &user_id,
-                        &ship.name,
-                        ship.score,
-                        Some(serde_json::json!({
-                            "deaths": 0
-                        })),
-                    );
+                // Leave the Lua match - triggers match_leave in Lua (handles leaderboard)
+                if let Err(e) = match_registry.leave(&game_match_id, session_id) {
+                    eprintln!("[!] Failed to leave match: {:?}", e);
+                }
 
-                    // Save profile to storage with permission (PublicRead so others can see stats)
-                    let _ = storage.set(
-                        &user_id,
-                        "profiles",
-                        "main",
-                        serde_json::json!({
-                            "name": ship.name,
-                            "high_score": ship.score,
-                            "last_played": std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0),
-                        }),
-                    );
+                println!("[-] {} left (session={})", client.username, session_id);
 
-                    // Remove from game room
-                    if let Some(room) = rooms.get(&game_room_id) {
-                        room.remove_player(id);
-                    }
+                // Remove from game room
+                if let Some(room) = rooms.get(&game_room_id) {
+                    room.remove_player(session_id);
                 }
             }
         }
 
-        // Game tick
+        // ==================== Game Tick ====================
         if now.duration_since(last_tick) >= TICK_DURATION {
-            let dt = 1.0 / TICK_RATE as f64;
             tick += 1;
 
-            // Update ships
-            for (id, ship) in &mut ships {
-                if !ship.alive {
-                    ship.respawn_timer -= dt;
-                    if ship.respawn_timer <= 0.0 {
-                        ship.alive = true;
-                        ship.x = WORLD_WIDTH / 2.0;
-                        ship.y = WORLD_HEIGHT / 2.0;
-                        ship.vx = 0.0;
-                        ship.vy = 0.0;
-                    }
-                    continue;
-                }
-
-                if let Some(client) = clients.get(id) {
-                    // Rotation
-                    if client.input.left {
-                        ship.angle -= SHIP_ROTATION_SPEED * dt;
-                    }
-                    if client.input.right {
-                        ship.angle += SHIP_ROTATION_SPEED * dt;
-                    }
-
-                    // Thrust
-                    if client.input.thrust {
-                        ship.vx += ship.angle.cos() * SHIP_THRUST * dt;
-                        ship.vy += ship.angle.sin() * SHIP_THRUST * dt;
-                    }
-
-                    // Fire
-                    ship.fire_cooldown -= dt;
-                    if client.input.fire && ship.fire_cooldown <= 0.0 {
-                        bullets.push(Bullet {
-                            owner_id: *id,
-                            x: ship.x + ship.angle.cos() * SHIP_RADIUS,
-                            y: ship.y + ship.angle.sin() * SHIP_RADIUS,
-                            vx: ship.angle.cos() * BULLET_SPEED,
-                            vy: ship.angle.sin() * BULLET_SPEED,
-                            lifetime: BULLET_LIFETIME,
-                        });
-                        ship.fire_cooldown = 0.2; // Fire rate limit
-                    }
-                }
-
-                // Apply drag
-                ship.vx *= SHIP_DRAG;
-                ship.vy *= SHIP_DRAG;
-
-                // Move
-                ship.x += ship.vx * dt;
-                ship.y += ship.vy * dt;
-
-                // Wrap around
-                ship.x = (ship.x + WORLD_WIDTH) % WORLD_WIDTH;
-                ship.y = (ship.y + WORLD_HEIGHT) % WORLD_HEIGHT;
+            // Tick the Lua match (ALL game logic in Lua)
+            if let Err(e) = match_registry.tick(&game_match_id) {
+                eprintln!("[!] Match tick error: {:?}", e);
             }
 
-            // Update bullets
-            bullets.retain_mut(|bullet| {
-                bullet.x += bullet.vx * dt;
-                bullet.y += bullet.vy * dt;
-                bullet.lifetime -= dt;
+            // Get state from Lua and broadcast to clients
+            if let Some(match_instance) = match_registry.get(&game_match_id) {
+                let broadcast_data = match_instance.state.state.get("broadcast").cloned()
+                    .unwrap_or_else(|| match_instance.state.state.clone());
 
-                // Wrap around
-                bullet.x = (bullet.x + WORLD_WIDTH) % WORLD_WIDTH;
-                bullet.y = (bullet.y + WORLD_HEIGHT) % WORLD_HEIGHT;
+                let msg = ServerMessage::GameState { state: broadcast_data };
+                let data = serde_json::to_vec(&msg).unwrap_or_default();
 
-                bullet.lifetime > 0.0
-            });
-
-            // Update asteroids
-            for asteroid in &mut asteroids {
-                asteroid.x += asteroid.vx * dt;
-                asteroid.y += asteroid.vy * dt;
-
-                // Wrap around
-                asteroid.x = (asteroid.x + WORLD_WIDTH) % WORLD_WIDTH;
-                asteroid.y = (asteroid.y + WORLD_HEIGHT) % WORLD_HEIGHT;
-            }
-
-            // Collision: bullets vs asteroids
-            let mut new_asteroids = Vec::new();
-            let mut bullets_to_remove = Vec::new();
-            let mut asteroids_to_remove = Vec::new();
-
-            for (bi, bullet) in bullets.iter().enumerate() {
-                for (ai, asteroid) in asteroids.iter().enumerate() {
-                    let radius = match asteroid.size {
-                        3 => 3.0,
-                        2 => 2.0,
-                        _ => 1.0,
-                    };
-
-                    let dx = bullet.x - asteroid.x;
-                    let dy = bullet.y - asteroid.y;
-                    if dx * dx + dy * dy < (BULLET_RADIUS + radius).powi(2) {
-                        bullets_to_remove.push(bi);
-                        asteroids_to_remove.push(ai);
-
-                        // Award points
-                        let points = match asteroid.size {
-                            3 => 20,
-                            2 => 50,
-                            _ => 100,
-                        };
-                        if let Some(ship) = ships.get_mut(&bullet.owner_id) {
-                            ship.score += points;
-                        }
-
-                        // Split asteroid
-                        if asteroid.size > 1 {
-                            for _ in 0..2 {
-                                let mut new_ast = spawn_asteroid(&mut next_asteroid_id, asteroid.size - 1);
-                                new_ast.x = asteroid.x;
-                                new_ast.y = asteroid.y;
-                                new_asteroids.push(new_ast);
-                            }
-                        }
-                        break;
-                    }
+                for client in clients.values() {
+                    let _ = server.send(&client.addr, &data);
                 }
-            }
-
-            // Remove destroyed
-            bullets_to_remove.sort_by(|a, b| b.cmp(a));
-            for i in bullets_to_remove {
-                if i < bullets.len() {
-                    bullets.remove(i);
-                }
-            }
-            asteroids_to_remove.sort_by(|a, b| b.cmp(a));
-            asteroids_to_remove.dedup();
-            for i in asteroids_to_remove {
-                if i < asteroids.len() {
-                    asteroids.remove(i);
-                }
-            }
-            asteroids.extend(new_asteroids);
-
-            // Spawn new asteroids if too few
-            while asteroids.len() < INITIAL_ASTEROIDS {
-                asteroids.push(spawn_asteroid(&mut next_asteroid_id, 3));
-            }
-
-            // Collision: ships vs asteroids
-            for ship in ships.values_mut() {
-                if !ship.alive {
-                    continue;
-                }
-
-                for asteroid in &asteroids {
-                    let radius = match asteroid.size {
-                        3 => 3.0,
-                        2 => 2.0,
-                        _ => 1.0,
-                    };
-
-                    let dx = ship.x - asteroid.x;
-                    let dy = ship.y - asteroid.y;
-                    if dx * dx + dy * dy < (SHIP_RADIUS + radius).powi(2) {
-                        ship.alive = false;
-                        ship.respawn_timer = 3.0;
-                        println!("[!] {} was destroyed (score: {})", ship.name, ship.score);
-                        break;
-                    }
-                }
-            }
-
-            // Build game state
-            let state = GameState {
-                tick,
-                ships: ships.values().map(|s| ShipState {
-                    id: s.id,
-                    name: s.name.clone(),
-                    x: s.x,
-                    y: s.y,
-                    angle: s.angle,
-                    score: s.score,
-                    alive: s.alive,
-                }).collect(),
-                asteroids: asteroids.iter().map(|a| AsteroidState {
-                    id: a.id,
-                    x: a.x,
-                    y: a.y,
-                    size: a.size,
-                }).collect(),
-                bullets: bullets.iter().map(|b| BulletState {
-                    x: b.x,
-                    y: b.y,
-                }).collect(),
-                leaderboard: leaderboards.get_top(LEADERBOARD_ID, 5)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|r| LeaderboardEntry {
-                        name: r.username.clone(),
-                        score: r.score,
-                    })
-                    .collect(),
-            };
-
-            // Broadcast to all clients using kaos_rudp::RudpServer (proper per-client sequences)
-            let msg = ServerMessage::GameState { state };
-            let data = serde_json::to_vec(&msg).unwrap();
-            for client in clients.values() {
-                let _ = server.send(&client.addr, &data);
             }
 
             last_tick = now;
@@ -727,40 +483,12 @@ fn main() -> std::io::Result<()> {
         // Status update
         if now.duration_since(last_status) >= Duration::from_secs(10) {
             if !clients.is_empty() {
-                println!("[i] {} players, {} asteroids, {} bullets",
-                    clients.len(), asteroids.len(), bullets.len());
+                println!("[i] {} players connected", clients.len());
             }
             last_status = now;
         }
 
         // Sleep to not burn CPU
         std::thread::sleep(Duration::from_micros(100));
-    }
-}
-
-fn spawn_asteroid(next_id: &mut u64, size: u8) -> Asteroid {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-
-    let id = *next_id;
-    *next_id += 1;
-
-    // Spawn at edges
-    let (x, y) = if rng.gen_bool(0.5) {
-        (rng.gen_range(0.0..WORLD_WIDTH), if rng.gen_bool(0.5) { 0.0 } else { WORLD_HEIGHT })
-    } else {
-        (if rng.gen_bool(0.5) { 0.0 } else { WORLD_WIDTH }, rng.gen_range(0.0..WORLD_HEIGHT))
-    };
-
-    let angle = rng.gen_range(0.0..2.0 * PI);
-    let speed = ASTEROID_SPEED * (4 - size) as f64 / 3.0;
-
-    Asteroid {
-        id,
-        x,
-        y,
-        vx: angle.cos() * speed,
-        vy: angle.sin() * speed,
-        size,
     }
 }

@@ -1,11 +1,18 @@
 //! Console HTTP server.
 
+use crate::chat::Chat;
 use crate::console::auth::AuthService;
 use crate::console::handlers;
 use crate::console::storage::{AccountStore, ApiKeyStore};
+use crate::leaderboard::Leaderboards;
+use crate::matchmaker::Matchmaker;
+use crate::notifications::Notifications;
 use crate::ratelimit::{RateLimiter, RateLimitPresets};
 use crate::room::RoomRegistry;
 use crate::session::SessionRegistry;
+use crate::social::Social;
+use crate::storage::Storage;
+use crate::tournament::Tournaments;
 use kaos_http::middleware::{CorsMiddleware, LoggingMiddleware, Middleware, Next};
 use kaos_http::{HttpServer, Request, Response, Router};
 use std::future::Future;
@@ -42,6 +49,14 @@ pub struct ServerContext {
     pub auth: Arc<AuthService>,
     pub accounts: Arc<AccountStore>,
     pub api_keys: Arc<ApiKeyStore>,
+    // Game services
+    pub storage: Arc<Storage>,
+    pub leaderboards: Arc<Leaderboards>,
+    pub tournaments: Arc<Tournaments>,
+    pub social: Arc<Social>,
+    pub chat: Arc<Chat>,
+    pub matchmaker: Arc<Matchmaker>,
+    pub notifications: Arc<Notifications>,
 }
 
 /// Console HTTP server for admin interface.
@@ -50,13 +65,85 @@ pub struct ConsoleServer {
     ctx: Arc<ServerContext>,
 }
 
-impl ConsoleServer {
-    /// Create new console server.
+/// Builder for ConsoleServer with optional services.
+pub struct ConsoleServerBuilder {
+    config: ConsoleConfig,
+    sessions: Arc<SessionRegistry>,
+    rooms: Arc<RoomRegistry>,
+    storage: Option<Arc<Storage>>,
+    leaderboards: Option<Arc<Leaderboards>>,
+    tournaments: Option<Arc<Tournaments>>,
+    social: Option<Arc<Social>>,
+    chat: Option<Arc<Chat>>,
+    matchmaker: Option<Arc<Matchmaker>>,
+    notifications: Option<Arc<Notifications>>,
+}
+
+impl ConsoleServerBuilder {
+    /// Create new builder with required services.
     pub fn new(
         config: ConsoleConfig,
         sessions: Arc<SessionRegistry>,
         rooms: Arc<RoomRegistry>,
     ) -> Self {
+        Self {
+            config,
+            sessions,
+            rooms,
+            storage: None,
+            leaderboards: None,
+            tournaments: None,
+            social: None,
+            chat: None,
+            matchmaker: None,
+            notifications: None,
+        }
+    }
+
+    /// Set storage service.
+    pub fn storage(mut self, storage: Arc<Storage>) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    /// Set leaderboards service.
+    pub fn leaderboards(mut self, leaderboards: Arc<Leaderboards>) -> Self {
+        self.leaderboards = Some(leaderboards);
+        self
+    }
+
+    /// Set tournaments service.
+    pub fn tournaments(mut self, tournaments: Arc<Tournaments>) -> Self {
+        self.tournaments = Some(tournaments);
+        self
+    }
+
+    /// Set social service.
+    pub fn social(mut self, social: Arc<Social>) -> Self {
+        self.social = Some(social);
+        self
+    }
+
+    /// Set chat service.
+    pub fn chat(mut self, chat: Arc<Chat>) -> Self {
+        self.chat = Some(chat);
+        self
+    }
+
+    /// Set matchmaker service.
+    pub fn matchmaker(mut self, matchmaker: Arc<Matchmaker>) -> Self {
+        self.matchmaker = Some(matchmaker);
+        self
+    }
+
+    /// Set notifications service.
+    pub fn notifications(mut self, notifications: Arc<Notifications>) -> Self {
+        self.notifications = Some(notifications);
+        self
+    }
+
+    /// Build the console server.
+    pub fn build(self) -> ConsoleServer {
         let accounts = Arc::new(AccountStore::new());
         let api_keys = Arc::new(ApiKeyStore::new());
 
@@ -71,7 +158,7 @@ impl ConsoleServer {
         }
 
         let auth = Arc::new(AuthService::new(
-            &config.jwt_secret,
+            &self.config.jwt_secret,
             Arc::clone(&accounts),
             Arc::clone(&api_keys),
         ));
@@ -79,14 +166,41 @@ impl ConsoleServer {
         let ctx = Arc::new(ServerContext {
             start_time: Instant::now(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            sessions,
-            rooms,
+            sessions: self.sessions,
+            rooms: self.rooms,
             auth,
             accounts,
             api_keys,
+            storage: self.storage.unwrap_or_else(|| Arc::new(Storage::new())),
+            leaderboards: self.leaderboards.unwrap_or_else(|| Arc::new(Leaderboards::new())),
+            tournaments: self.tournaments.unwrap_or_else(|| Arc::new(Tournaments::new())),
+            social: self.social.unwrap_or_else(|| Arc::new(Social::new())),
+            chat: self.chat.unwrap_or_else(|| Arc::new(Chat::new())),
+            matchmaker: self.matchmaker.unwrap_or_else(|| Arc::new(Matchmaker::new())),
+            notifications: self.notifications.unwrap_or_else(|| Arc::new(Notifications::new())),
         });
 
-        Self { config, ctx }
+        ConsoleServer { config: self.config, ctx }
+    }
+}
+
+impl ConsoleServer {
+    /// Create new console server with default services.
+    pub fn new(
+        config: ConsoleConfig,
+        sessions: Arc<SessionRegistry>,
+        rooms: Arc<RoomRegistry>,
+    ) -> Self {
+        ConsoleServerBuilder::new(config, sessions, rooms).build()
+    }
+
+    /// Create a builder for customized console server.
+    pub fn builder(
+        config: ConsoleConfig,
+        sessions: Arc<SessionRegistry>,
+        rooms: Arc<RoomRegistry>,
+    ) -> ConsoleServerBuilder {
+        ConsoleServerBuilder::new(config, sessions, rooms)
     }
 
     /// Start serving requests.
@@ -278,6 +392,332 @@ impl ConsoleServer {
                 move |req| {
                     let keys = Arc::clone(&keys);
                     async move { handlers::get_key_usage(req, keys).await }
+                }
+            })
+
+            // Player routes
+            .get("/api/players", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_players(req, ctx).await }
+                }
+            })
+            .get("/api/players/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_player(req, ctx).await }
+                }
+            })
+            .post("/api/players/:id/ban", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::ban_player(req, ctx).await }
+                }
+            })
+            .post("/api/players/:id/unban", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::unban_player(req, ctx).await }
+                }
+            })
+            .delete("/api/players/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::delete_player(req, ctx).await }
+                }
+            })
+
+            // Storage routes
+            .get("/api/storage", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_storage(req, ctx).await }
+                }
+            })
+            .get("/api/storage/:user_id/:collection/:key", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_storage_object(req, ctx).await }
+                }
+            })
+            .post("/api/storage", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::write_storage_object(req, ctx).await }
+                }
+            })
+            .delete("/api/storage/:user_id/:collection/:key", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::delete_storage_object(req, ctx).await }
+                }
+            })
+
+            // Leaderboard routes
+            .get("/api/leaderboards", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_leaderboards(req, ctx).await }
+                }
+            })
+            .get("/api/leaderboards/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_leaderboard(req, ctx).await }
+                }
+            })
+            .get("/api/leaderboards/:id/records", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_leaderboard_records(req, ctx).await }
+                }
+            })
+            .post("/api/leaderboards", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::create_leaderboard(req, ctx).await }
+                }
+            })
+            .delete("/api/leaderboards/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::delete_leaderboard(req, ctx).await }
+                }
+            })
+
+            // Tournament routes
+            .get("/api/tournaments", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_tournaments(req, ctx).await }
+                }
+            })
+            .get("/api/tournaments/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_tournament(req, ctx).await }
+                }
+            })
+            .get("/api/tournaments/:id/records", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_tournament_records(req, ctx).await }
+                }
+            })
+            .post("/api/tournaments", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::create_tournament(req, ctx).await }
+                }
+            })
+            .post("/api/tournaments/:id/cancel", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::cancel_tournament(req, ctx).await }
+                }
+            })
+
+            // Social routes
+            .get("/api/social/friends", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_friends(req, ctx).await }
+                }
+            })
+            .get("/api/social/groups", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_groups(req, ctx).await }
+                }
+            })
+            .get("/api/social/groups/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_group(req, ctx).await }
+                }
+            })
+            .get("/api/social/groups/:id/members", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_group_members(req, ctx).await }
+                }
+            })
+            .post("/api/social/groups", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::create_group(req, ctx).await }
+                }
+            })
+            .delete("/api/social/groups/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::delete_group(req, ctx).await }
+                }
+            })
+
+            // Chat routes
+            .get("/api/chat/channels", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_channels(req, ctx).await }
+                }
+            })
+            .get("/api/chat/channels/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_channel(req, ctx).await }
+                }
+            })
+            .get("/api/chat/channels/:id/messages", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_channel_messages(req, ctx).await }
+                }
+            })
+            .delete("/api/chat/channels/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::delete_channel(req, ctx).await }
+                }
+            })
+            .post("/api/chat/channels/:id/send", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::send_system_message(req, ctx).await }
+                }
+            })
+
+            // Matchmaker routes
+            .get("/api/matchmaker/tickets", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_matchmaker_tickets(req, ctx).await }
+                }
+            })
+            .get("/api/matchmaker/tickets/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_matchmaker_ticket(req, ctx).await }
+                }
+            })
+            .delete("/api/matchmaker/tickets/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::cancel_matchmaker_ticket(req, ctx).await }
+                }
+            })
+            .get("/api/matchmaker/stats", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_matchmaker_stats(req, ctx).await }
+                }
+            })
+
+            // Notification routes
+            .get("/api/notifications", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_notifications(req, ctx).await }
+                }
+            })
+            .get("/api/notifications/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_notification(req, ctx).await }
+                }
+            })
+            .post("/api/notifications", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::send_notification(req, ctx).await }
+                }
+            })
+            .post("/api/notifications/:id/read", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::mark_notification_read(req, ctx).await }
+                }
+            })
+            .delete("/api/notifications/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::delete_notification(req, ctx).await }
+                }
+            })
+
+            // Lua routes
+            .get("/api/lua/scripts", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_scripts(req, ctx).await }
+                }
+            })
+            .get("/api/lua/scripts/:name", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_script(req, ctx).await }
+                }
+            })
+            .get("/api/lua/rpcs", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_rpcs(req, ctx).await }
+                }
+            })
+            .post("/api/lua/rpcs/:name/execute", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::execute_rpc(req, ctx).await }
+                }
+            })
+            .post("/api/lua/reload", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::reload_scripts(req, ctx).await }
                 }
             })
     }

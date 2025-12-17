@@ -9,6 +9,6 @@ pub mod storage;
 pub mod types;
 
 pub use auth::{AuthService, Identity, Role};
-pub use server::{ConsoleConfig, ConsoleServer, ServerContext};
+pub use server::{ConsoleConfig, ConsoleServer, ConsoleServerBuilder, ServerContext};
 pub use storage::{AccountStore, ApiKeyStore};
 pub use types::*;

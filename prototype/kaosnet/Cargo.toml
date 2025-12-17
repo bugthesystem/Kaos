@@ -15,6 +15,7 @@ metrics = ["prometheus"]
 telemetry = ["dep:tracing", "opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "tracing-subscriber"]
 console = ["axum", "tower-http", "bcrypt", "jsonwebtoken", "hex", "sha2", "argon2"]
 auth = ["bcrypt", "jsonwebtoken", "sha2", "hex"]
+postgres = ["sqlx", "async-trait"]
 
 [dependencies]
 kaos = { path = "../../kaos" }
@@ -52,6 +53,10 @@ jsonwebtoken = { version = "9", optional = true }
 hex = { version = "0.4", optional = true }
 sha2 = { version = "0.10", optional = true }
 argon2 = { version = "0.5", optional = true }
+
+# PostgreSQL storage (optional)
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "json"], optional = true }
+async-trait = { version = "0.1", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -22,9 +22,14 @@ An **Agar.io-style multiplayer game** demonstrating KaosNet's real-time capabili
 
 ## Quick Start
 
-### Web Client (Offline Demo)
+### Running the Server
 
-Just open `web/index.html` in your browser - no server needed for the demo!
+```bash
+cd prototype/examples/kaos_io
+cargo run --bin kaos-io-server
+```
+
+Then open http://localhost:8080 in your browser to play!
 
 ### Terminal Client
 

@@ -82,7 +82,11 @@ pub use matchmaker::{Matchmaker, MatchmakerConfig, MatchmakerTicket, MatchmakerM
 pub use notifications::{Notifications, Notification, NotificationCode};
 pub use ratelimit::{RateLimiter, RateLimitConfig, RateLimitResult, OperationRateLimiter, RateLimitPresets};
 pub use social::{Social, Friend, FriendState, Group, GroupRole, PresenceStatus};
-pub use storage::{Storage, StorageObject, ObjectPermission, Query};
+pub use storage::{Storage, StorageObject, ObjectPermission, Query, StorageBackend, MemoryBackend};
+
+// Re-exports - PostgreSQL storage (conditional)
+#[cfg(feature = "postgres")]
+pub use storage::{PostgresBackend, PostgresSyncBackend, AsyncStorageBackend};
 pub use tournament::{Tournaments, Tournament, TournamentConfig, TournamentRecord, TournamentState};
 
 // Re-exports - Hooks

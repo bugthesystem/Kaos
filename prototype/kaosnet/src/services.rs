@@ -1,14 +1,21 @@
-//! Service wrappers with hook integration.
+//! Service wrappers with hook and metrics integration.
 //!
 //! These wrappers execute before/after hooks around service operations,
 //! allowing Lua scripts and native hooks to intercept and modify requests.
+//!
+//! When the `metrics` feature is enabled, operations automatically record
+//! metrics like storage read/write counts, leaderboard submissions, etc.
 
 use std::sync::Arc;
 
 use crate::hooks::{HookContext, HookError, HookExecutor, HookOperation, HookRegistry};
 use crate::leaderboard::{LeaderboardError, LeaderboardRecord, Leaderboards};
+use crate::notifications::Notifications;
 use crate::social::{Friend, Group, GroupMember, Social, SocialError};
 use crate::storage::{Storage, StorageError, StorageObject};
+
+#[cfg(feature = "metrics")]
+use crate::metrics::Metrics;
 
 /// Error type for hooked service operations.
 #[derive(Debug, thiserror::Error)]
@@ -28,10 +35,12 @@ pub enum ServiceError {
 
 pub type Result<T> = std::result::Result<T, ServiceError>;
 
-/// Storage service with hook integration.
+/// Storage service with hook and metrics integration.
 pub struct HookedStorage {
     storage: Arc<Storage>,
     hooks: HookExecutor,
+    #[cfg(feature = "metrics")]
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl HookedStorage {
@@ -39,8 +48,27 @@ impl HookedStorage {
         Self {
             storage,
             hooks: HookExecutor::new(hook_registry),
+            #[cfg(feature = "metrics")]
+            metrics: None,
         }
     }
+
+    /// Enable metrics recording.
+    #[cfg(feature = "metrics")]
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_metric(&self, operation: &str) {
+        if let Some(ref m) = self.metrics {
+            m.record_storage_operation(operation);
+        }
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    fn record_metric(&self, _operation: &str) {}
 
     /// Read a storage object with hooks.
     pub fn get(
@@ -50,6 +78,9 @@ impl HookedStorage {
         collection: &str,
         key: &str,
     ) -> Result<Option<StorageObject>> {
+        // Record metric
+        self.record_metric("get");
+
         // Build payload for hooks
         let payload = serde_json::json!({
             "user_id": user_id,
@@ -97,6 +128,9 @@ impl HookedStorage {
         key: &str,
         value: serde_json::Value,
     ) -> Result<StorageObject> {
+        // Record metric
+        self.record_metric("set");
+
         // Build payload for hooks
         let payload = serde_json::json!({
             "user_id": user_id,
@@ -140,6 +174,9 @@ impl HookedStorage {
         collection: &str,
         key: &str,
     ) -> Result<bool> {
+        // Record metric
+        self.record_metric("delete");
+
         // Build payload for hooks
         let payload = serde_json::json!({
             "user_id": user_id,
@@ -185,10 +222,12 @@ impl HookedStorage {
     }
 }
 
-/// Leaderboards service with hook integration.
+/// Leaderboards service with hook and metrics integration.
 pub struct HookedLeaderboards {
     leaderboards: Arc<Leaderboards>,
     hooks: HookExecutor,
+    #[cfg(feature = "metrics")]
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl HookedLeaderboards {
@@ -196,7 +235,16 @@ impl HookedLeaderboards {
         Self {
             leaderboards,
             hooks: HookExecutor::new(hook_registry),
+            #[cfg(feature = "metrics")]
+            metrics: None,
         }
+    }
+
+    /// Enable metrics recording.
+    #[cfg(feature = "metrics")]
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Submit a score with hooks.
@@ -209,6 +257,12 @@ impl HookedLeaderboards {
         score: i64,
         metadata: Option<serde_json::Value>,
     ) -> Result<LeaderboardRecord> {
+        // Record metric
+        #[cfg(feature = "metrics")]
+        if let Some(ref m) = self.metrics {
+            m.leaderboard_submissions_total.inc();
+        }
+
         // Build payload for hooks
         let payload = serde_json::json!({
             "leaderboard_id": leaderboard_id,
@@ -305,10 +359,14 @@ impl HookedLeaderboards {
     }
 }
 
-/// Social service with hook integration.
+/// Social service with hook, metrics, and notification integration.
 pub struct HookedSocial {
     social: Arc<Social>,
     hooks: HookExecutor,
+    notifications: Option<Arc<Notifications>>,
+    #[cfg(feature = "metrics")]
+    #[allow(dead_code)]
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl HookedSocial {
@@ -316,10 +374,28 @@ impl HookedSocial {
         Self {
             social,
             hooks: HookExecutor::new(hook_registry),
+            notifications: None,
+            #[cfg(feature = "metrics")]
+            metrics: None,
         }
     }
 
+    /// Enable notifications for social events.
+    pub fn with_notifications(mut self, notifications: Arc<Notifications>) -> Self {
+        self.notifications = Some(notifications);
+        self
+    }
+
+    /// Enable metrics recording.
+    #[cfg(feature = "metrics")]
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
     /// Add a friend with hooks.
+    ///
+    /// Sends a FriendRequest notification to the target user.
     pub fn add_friend(
         &self,
         ctx: &HookContext,
@@ -342,6 +418,13 @@ impl HookedSocial {
             .unwrap_or(friend_username);
 
         let result = self.social.add_friend(user_id, friend_id, friend_username)?;
+
+        // Send friend request notification to the target
+        if let Some(ref notifications) = self.notifications {
+            // Get sender's username from context or use user_id
+            let sender_username = ctx.username.as_deref().unwrap_or(user_id);
+            let _ = notifications.notify_friend_request(friend_id, user_id, sender_username);
+        }
 
         let result_json = serde_json::json!({
             "friend_id": result.user_id,

@@ -1,13 +1,19 @@
 //! PostgreSQL storage backend implementation.
 //!
 //! Provides persistent storage using PostgreSQL with connection pooling.
+//!
+//! Enable with `postgres` feature flag:
+//! ```toml
+//! kaosnet = { version = "0.1", features = ["postgres"] }
+//! ```
 
-use super::{ObjectId, ObjectPermission, Query, QueryOp, Result, StorageError, StorageObject, WriteOp};
+use super::{ObjectId, ObjectPermission, Query, Result, StorageBackend, StorageError, StorageObject, WriteOp};
 use serde_json::Value;
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use tokio::runtime::Runtime;
 
-/// PostgreSQL storage backend.
+/// PostgreSQL storage backend (async).
 pub struct PostgresBackend {
     pool: PgPool,
 }
@@ -23,32 +29,34 @@ impl PostgresBackend {
         Ok(Self { pool })
     }
 
-    /// Create with custom pool options.
-    pub async fn with_pool(pool: PgPool) -> Self {
+    /// Create with existing pool.
+    pub fn with_pool(pool: PgPool) -> Self {
         Self { pool }
     }
 
     /// Run migrations to set up the schema.
     pub async fn migrate(&self) -> std::result::Result<(), sqlx::Error> {
-        sqlx::query(include_str!("postgres_schema.sql"))
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS storage_objects (
+                user_id TEXT NOT NULL,
+                collection TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value JSONB NOT NULL,
+                version BIGINT NOT NULL DEFAULT 1,
+                permission INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (user_id, collection, key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_storage_collection ON storage_objects(collection);
+            CREATE INDEX IF NOT EXISTS idx_storage_user_collection ON storage_objects(user_id, collection);
+            "#
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
-    }
-
-    fn now_millis() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0)
-    }
-
-    fn permission_to_int(p: &ObjectPermission) -> i32 {
-        match p {
-            ObjectPermission::OwnerOnly => 0,
-            ObjectPermission::PublicRead => 1,
-            ObjectPermission::PublicReadWrite => 2,
-        }
     }
 
     fn int_to_permission(i: i32) -> ObjectPermission {
@@ -75,7 +83,7 @@ impl PostgresBackend {
         .bind(key)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| StorageError::Internal(e.to_string()))?;
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
 
         Ok(row.map(|r| StorageObject {
             user_id: r.get("user_id"),
@@ -97,8 +105,6 @@ impl PostgresBackend {
         value: Value,
         expected_version: Option<u64>,
     ) -> Result<StorageObject> {
-        let now = Self::now_millis();
-
         // Check version if specified
         if let Some(expected) = expected_version {
             let existing = self.get_async(user_id, collection, key).await?;
@@ -123,7 +129,7 @@ impl PostgresBackend {
         let row = sqlx::query(
             r#"
             INSERT INTO storage_objects (user_id, collection, key, value, version, permission, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, 1, 1, NOW(), NOW())
+            VALUES ($1, $2, $3, $4, 1, 0, NOW(), NOW())
             ON CONFLICT (user_id, collection, key)
             DO UPDATE SET
                 value = $4,
@@ -140,7 +146,7 @@ impl PostgresBackend {
         .bind(&value)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| StorageError::Internal(e.to_string()))?;
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
 
         Ok(StorageObject {
             user_id: row.get("user_id"),
@@ -163,7 +169,7 @@ impl PostgresBackend {
         .bind(key)
         .execute(&self.pool)
         .await
-        .map_err(|e| StorageError::Internal(e.to_string()))?;
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -175,7 +181,7 @@ impl PostgresBackend {
         limit: usize,
         cursor: Option<&str>,
     ) -> Result<(Vec<StorageObject>, Option<String>)> {
-        let query = match cursor {
+        let rows = match cursor {
             Some(cursor_key) => {
                 sqlx::query(
                     r#"
@@ -192,6 +198,8 @@ impl PostgresBackend {
                 .bind(collection)
                 .bind(cursor_key)
                 .bind((limit + 1) as i64)
+                .fetch_all(&self.pool)
+                .await
             }
             None => {
                 sqlx::query(
@@ -208,12 +216,10 @@ impl PostgresBackend {
                 .bind(user_id)
                 .bind(collection)
                 .bind((limit + 1) as i64)
+                .fetch_all(&self.pool)
+                .await
             }
-        };
-
-        let rows = query.fetch_all(&self.pool)
-            .await
-            .map_err(|e| StorageError::Internal(e.to_string()))?;
+        }.map_err(|e| StorageError::Backend(e.to_string()))?;
 
         let mut objects: Vec<StorageObject> = rows.iter().map(|r| StorageObject {
             user_id: r.get("user_id"),
@@ -239,23 +245,7 @@ impl PostgresBackend {
     }
 
     pub async fn query_async(&self, collection: &str, query: Query, limit: usize) -> Result<Vec<StorageObject>> {
-        // Build WHERE clause from query
-        let (where_clause, params) = self.build_query_where(&query);
-
-        let sql = format!(
-            r#"
-            SELECT user_id, collection, key, value, version, permission,
-                   EXTRACT(EPOCH FROM created_at)::bigint * 1000 as created_at,
-                   EXTRACT(EPOCH FROM updated_at)::bigint * 1000 as updated_at
-            FROM storage_objects
-            WHERE collection = $1 {}
-            LIMIT $2
-            "#,
-            if where_clause.is_empty() { String::new() } else { format!("AND {}", where_clause) }
-        );
-
-        // For now, use a simpler approach - fetch all and filter in Rust
-        // This is not optimal but works for the initial implementation
+        // Fetch and filter in Rust (can be optimized with JSONB queries later)
         let rows = sqlx::query(
             r#"
             SELECT user_id, collection, key, value, version, permission,
@@ -267,10 +257,10 @@ impl PostgresBackend {
             "#
         )
         .bind(collection)
-        .bind((limit * 10) as i64) // Fetch more to account for filtering
+        .bind((limit * 10) as i64)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| StorageError::Internal(e.to_string()))?;
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
 
         let mut results = Vec::new();
         for r in rows {
@@ -296,16 +286,11 @@ impl PostgresBackend {
     }
 
     pub async fn count_async(&self, collection: &str, query: Query) -> Result<u64> {
-        // Simple implementation - can be optimized with proper SQL query building
-        let rows = sqlx::query(
-            r#"
-            SELECT value FROM storage_objects WHERE collection = $1
-            "#
-        )
-        .bind(collection)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| StorageError::Internal(e.to_string()))?;
+        let rows = sqlx::query("SELECT value FROM storage_objects WHERE collection = $1")
+            .bind(collection)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
 
         let count = rows.iter()
             .filter(|r| {
@@ -317,14 +302,125 @@ impl PostgresBackend {
         Ok(count as u64)
     }
 
-    fn build_query_where(&self, _query: &Query) -> (String, Vec<Value>) {
-        // TODO: Build proper JSONB query clauses
-        // For now, return empty to use Rust-side filtering
-        (String::new(), vec![])
+    pub async fn get_many_async(&self, reads: &[ObjectId]) -> Result<Vec<Option<StorageObject>>> {
+        let mut results = Vec::with_capacity(reads.len());
+        for id in reads {
+            results.push(self.get_async(&id.user_id, &id.collection, &id.key).await?);
+        }
+        Ok(results)
+    }
+
+    pub async fn write_many_async(&self, writes: &[WriteOp]) -> Result<Vec<StorageObject>> {
+        let mut results = Vec::with_capacity(writes.len());
+        for write in writes {
+            let obj = self.set_async(
+                &write.id.user_id,
+                &write.id.collection,
+                &write.id.key,
+                write.value.clone(),
+                write.version,
+            ).await?;
+            results.push(obj);
+        }
+        Ok(results)
+    }
+
+    pub async fn delete_many_async(&self, deletes: &[ObjectId]) -> Result<usize> {
+        let mut count = 0;
+        for id in deletes {
+            if self.delete_async(&id.user_id, &id.collection, &id.key).await? {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 }
 
-/// Async storage backend trait for PostgreSQL and other async backends.
+/// Sync wrapper for PostgresBackend that implements StorageBackend.
+///
+/// Uses a tokio runtime internally to bridge async to sync.
+pub struct PostgresSyncBackend {
+    inner: Arc<PostgresBackend>,
+    runtime: Arc<Runtime>,
+}
+
+impl PostgresSyncBackend {
+    /// Create a new sync backend from an async backend.
+    pub fn new(backend: PostgresBackend, runtime: Runtime) -> Self {
+        Self {
+            inner: Arc::new(backend),
+            runtime: Arc::new(runtime),
+        }
+    }
+
+    /// Create from a database URL.
+    ///
+    /// This creates a new tokio runtime internally.
+    pub fn connect(database_url: &str) -> std::result::Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let runtime = Runtime::new()?;
+        let backend = runtime.block_on(PostgresBackend::new(database_url))?;
+        Ok(Self::new(backend, runtime))
+    }
+
+    /// Run database migrations.
+    pub fn migrate(&self) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.runtime.block_on(self.inner.migrate())?;
+        Ok(())
+    }
+}
+
+impl StorageBackend for PostgresSyncBackend {
+    fn get(&self, user_id: &str, collection: &str, key: &str) -> Result<Option<StorageObject>> {
+        self.runtime.block_on(self.inner.get_async(user_id, collection, key))
+    }
+
+    fn set(
+        &self,
+        user_id: &str,
+        collection: &str,
+        key: &str,
+        value: Value,
+        expected_version: Option<u64>,
+    ) -> Result<StorageObject> {
+        self.runtime.block_on(self.inner.set_async(user_id, collection, key, value, expected_version))
+    }
+
+    fn delete(&self, user_id: &str, collection: &str, key: &str) -> Result<bool> {
+        self.runtime.block_on(self.inner.delete_async(user_id, collection, key))
+    }
+
+    fn list(
+        &self,
+        user_id: &str,
+        collection: &str,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<StorageObject>, Option<String>)> {
+        self.runtime.block_on(self.inner.list_async(user_id, collection, limit, cursor))
+    }
+
+    fn get_many(&self, reads: &[ObjectId]) -> Result<Vec<Option<StorageObject>>> {
+        self.runtime.block_on(self.inner.get_many_async(reads))
+    }
+
+    fn write_many(&self, writes: &[WriteOp]) -> Result<Vec<StorageObject>> {
+        self.runtime.block_on(self.inner.write_many_async(writes))
+    }
+
+    fn delete_many(&self, deletes: &[ObjectId]) -> Result<usize> {
+        self.runtime.block_on(self.inner.delete_many_async(deletes))
+    }
+
+    fn query(&self, collection: &str, query: Query, limit: usize) -> Result<Vec<StorageObject>> {
+        self.runtime.block_on(self.inner.query_async(collection, query, limit))
+    }
+
+    fn count(&self, collection: &str, query: Query) -> Result<u64> {
+        self.runtime.block_on(self.inner.count_async(collection, query))
+    }
+}
+
+/// Async storage backend trait.
 #[async_trait::async_trait]
 pub trait AsyncStorageBackend: Send + Sync {
     async fn get(&self, user_id: &str, collection: &str, key: &str) -> Result<Option<StorageObject>>;

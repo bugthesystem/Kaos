@@ -19,9 +19,24 @@ INSERT INTO players (user_id, username, display_name, email, email_verified, met
 ON CONFLICT (user_id) DO NOTHING;
 
 -- ============================================================================
--- Sample Storage Objects (player profiles)
+-- Sample Storage Objects (player profiles for Console API)
 -- ============================================================================
 
+-- Player profiles in storage format (used by Console /api/players endpoint)
+INSERT INTO storage_objects (user_id, collection, key, value) VALUES
+    ('user_001', 'players', 'profile', '{"username": "ProGamer42", "display_name": "The Pro Gamer", "email": "pro@example.com", "email_verified": true, "devices": ["device_001"], "created_at": 1700000000000, "updated_at": 1702500000000, "banned": false}'),
+    ('user_002', 'players', 'profile', '{"username": "CasualPlayer", "display_name": "Just Chilling", "email": "casual@example.com", "email_verified": true, "devices": ["device_002"], "created_at": 1700100000000, "updated_at": 1702400000000, "banned": false}'),
+    ('user_003', 'players', 'profile', '{"username": "SpeedRunner", "display_name": "Speed Demon", "email": "speed@example.com", "email_verified": false, "devices": ["device_003"], "created_at": 1700200000000, "updated_at": 1702300000000, "banned": false}'),
+    ('user_004', 'players', 'profile', '{"username": "NoobMaster69", "display_name": "Noob No More", "email": "noob@example.com", "email_verified": true, "devices": ["device_004"], "created_at": 1700300000000, "updated_at": 1702200000000, "banned": false}'),
+    ('user_005', 'players', 'profile', '{"username": "EliteSniper", "display_name": "Elite Sniper", "email": "elite@example.com", "email_verified": true, "devices": ["device_005"], "created_at": 1700400000000, "updated_at": 1702100000000, "banned": false}'),
+    ('user_006', 'players', 'profile', '{"username": "TankMain", "display_name": "Tank Main", "email": "tank@example.com", "email_verified": true, "devices": ["device_006"], "created_at": 1700500000000, "updated_at": 1702000000000, "banned": false}'),
+    ('user_007', 'players', 'profile', '{"username": "HealBot", "display_name": "Healing Machine", "email": "heal@example.com", "email_verified": true, "devices": ["device_007"], "created_at": 1700600000000, "updated_at": 1701900000000, "banned": false}'),
+    ('user_008', 'players', 'profile', '{"username": "LoneSurvivor", "display_name": "Last Standing", "email": "lone@example.com", "email_verified": false, "devices": ["device_008"], "created_at": 1700700000000, "updated_at": 1701800000000, "banned": false}'),
+    ('user_009', 'players', 'profile', '{"username": "TeamCaptain", "display_name": "The Captain", "email": "captain@example.com", "email_verified": true, "devices": ["device_009"], "created_at": 1700800000000, "updated_at": 1701700000000, "banned": false}'),
+    ('user_010', 'players', 'profile', '{"username": "NightOwl", "display_name": "Night Gamer", "email": "night@example.com", "email_verified": true, "devices": ["device_010"], "created_at": 1700900000000, "updated_at": 1701600000000, "banned": false}')
+ON CONFLICT (user_id, collection, key) DO NOTHING;
+
+-- Game profiles (separate from player accounts)
 INSERT INTO storage_objects (user_id, collection, key, value) VALUES
     ('user_001', 'profiles', 'main', '{"name": "ProGamer42", "color": "#FF6B6B", "high_score": 15420, "games_played": 892}'),
     ('user_002', 'profiles', 'main', '{"name": "CasualPlayer", "color": "#4ECDC4", "high_score": 3200, "games_played": 45}'),

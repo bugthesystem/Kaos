@@ -2,22 +2,40 @@
 //!
 //! Provides persistent storage with multiple backends:
 //! - In-memory (default, for development)
-//! - SQLite (embedded, for small deployments)
-//! - PostgreSQL (for production)
+//! - PostgreSQL (for production, enable with `postgres` feature)
 //!
 //! ## Storage Types
 //!
 //! - **Key-Value**: Simple key-value pairs per user
 //! - **Collections**: Document storage with queries (like MongoDB)
 //! - **Objects**: Shared objects across users
+//!
+//! ## PostgreSQL Usage
+//!
+//! ```rust,ignore
+//! use kaosnet::storage::{Storage, PostgresSyncBackend};
+//!
+//! // Connect to PostgreSQL
+//! let backend = PostgresSyncBackend::connect("postgres://localhost/kaosnet")?;
+//! backend.migrate()?;
+//!
+//! // Create storage with postgres backend
+//! let storage = Storage::with_backend(Arc::new(backend));
+//! ```
 
 mod backend;
 mod collections;
 mod objects;
 
+#[cfg(feature = "postgres")]
+mod postgres;
+
 pub use backend::{StorageBackend, MemoryBackend};
 pub use collections::{Collection, Document, Query, QueryOp};
 pub use objects::{StorageObject, ObjectPermission};
+
+#[cfg(feature = "postgres")]
+pub use postgres::{PostgresBackend, PostgresSyncBackend, AsyncStorageBackend};
 
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};

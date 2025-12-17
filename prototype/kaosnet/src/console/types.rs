@@ -102,6 +102,15 @@ impl ApiKeyScope {
             Permission::ExecuteRpc => self.contains(Self::EXECUTE_RPC),
             Permission::ManageAccounts => false, // API keys can never manage accounts
             Permission::ManageApiKeys => false,  // API keys can never manage API keys
+            // Service management - API keys don't have these permissions
+            Permission::ManagePlayers => false,
+            Permission::ManageLeaderboards => false,
+            Permission::ManageTournaments => false,
+            Permission::ManageStorage => false,
+            Permission::ManageSocial => false,
+            Permission::ManageChat => false,
+            Permission::ManageMatchmaker => false,
+            Permission::ManageNotifications => false,
         }
     }
 
