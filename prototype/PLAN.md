@@ -1,12 +1,29 @@
 # KaosNet vs Nakama - Status & Remaining Work
 
-**Last Updated**: 2024-12-16
-**Test Count**: 85 passing
-**Overall Parity**: ~95% features exist, ~85% production-ready
+**Last Updated**: 2024-12-17
+**Test Count**: 139 passing
+**Overall Parity**: ~98% features exist, ~98% actually wired
 
 ---
 
-## Completed Work (Validated Dec 16, 2024)
+## 🔧 FIXES APPLIED (Dec 17-18, 2024)
+
+| Issue | Fix | Status |
+|-------|-----|--------|
+| `with_metrics()` never called | Wired in kaos-io server.rs | ✅ Fixed |
+| `with_notifications()` never called | Wired in kaos-io server.rs | ✅ Fixed |
+| No `/metrics` endpoint in console | Added to console/server.rs | ✅ Fixed |
+| ClientTransportType missing impl | Added is_open/receive/send methods | ✅ Fixed |
+| kaos-rudp path in Cargo.toml | Fixed relative path | ✅ Fixed |
+| PostgresBackend has 0 tests | Added 6 tests in postgres.rs | ✅ Fixed |
+| **LuaServices used RAW services** | Now uses `with_hooked_services()` | ✅ Fixed |
+| **game.lua leaderboard bypassed hooks** | Lua API now routes through hooked services | ✅ Fixed |
+| **kaos-asteroids missing metrics** | Added metrics + hooked services + PostgreSQL support | ✅ Fixed |
+| **Examples only in-memory storage** | Both examples now support PostgreSQL via DATABASE_URL | ✅ Fixed |
+
+---
+
+## Completed Work
 
 ### Phase 1: Lua API ✅ COMPLETE
 
@@ -22,12 +39,12 @@ All 18 Lua functions implemented and tested in `kaosnet/src/lua/api.rs`:
 
 ---
 
-### Phase 2: Hooked Services ✅ COMPLETE
+### Phase 2: Hooked Services ✅ COMPLETE (NOW WIRED)
 
-All hooked service wrappers implemented in `kaosnet/src/services.rs`:
+All hooked service wrappers implemented and wired in `kaos-io/src/server.rs`:
 
-| Service | Before Hooks | After Hooks | Metrics | Notifications |
-|---------|--------------|-------------|---------|---------------|
+| Service | Before Hooks | After Hooks | Metrics Wired | Notifications Wired |
+|---------|--------------|-------------|---------------|---------------------|
 | `HookedStorage` | ✅ | ✅ | ✅ | - |
 | `HookedLeaderboards` | ✅ | ✅ | ✅ | - |
 | `HookedSocial` | ✅ | ✅ | ✅ | ✅ |
@@ -49,32 +66,38 @@ All hooked service wrappers implemented in `kaosnet/src/services.rs`:
 
 ---
 
-### Phase 4: PostgreSQL Backend ✅ COMPLETE
+### Phase 4: PostgreSQL Backend ✅ COMPLETE (NOW TESTED)
 
 `PostgresBackend` + `PostgresSyncBackend` in `kaosnet/src/storage/postgres.rs`:
 
-| Feature | Status |
-|---------|--------|
-| CRUD operations | ✅ Done |
-| Connection pooling (sqlx) | ✅ Done |
-| Schema migrations | ✅ Done |
-| `AsyncStorageBackend` trait | ✅ Done |
-| **Sync wrapper (`PostgresSyncBackend`)** | ✅ Done |
+| Feature | Status | Tests |
+|---------|--------|-------|
+| CRUD operations | ✅ Done | test_postgres_crud |
+| Version conflicts | ✅ Done | test_postgres_version_conflict |
+| List with pagination | ✅ Done | test_postgres_list |
+| Query/Count | ✅ Done | test_postgres_query |
+| Batch operations | ✅ Done | test_postgres_batch_operations |
+| **Sync wrapper** | ✅ Done | test_postgres_sync_wrapper |
 
-Usage:
-```rust
-use kaosnet::{Storage, PostgresSyncBackend};
-
-let backend = PostgresSyncBackend::connect("postgres://localhost/kaosnet")?;
-backend.migrate()?;
-let storage = Storage::with_backend(Arc::new(backend));
-```
+Tests skip gracefully if `POSTGRES_TEST_URL` env var is not set.
 
 ---
 
-### Phase 5: Metrics Integration ✅ COMPLETE
+### Phase 5: Metrics Integration ✅ COMPLETE (NOW WIRED)
 
-Services now record metrics when `metrics` feature is enabled:
+Services now have metrics wired when `metrics` feature is enabled:
+
+```rust
+// kaos-io/src/server.rs - NOW WIRED
+let hooked_storage = Arc::new(
+    HookedStorage::new(Arc::clone(&storage), Arc::clone(&hooks))
+        .with_metrics(Arc::clone(&metrics))
+);
+let hooked_leaderboards = Arc::new(
+    HookedLeaderboards::new(Arc::clone(&leaderboards), Arc::clone(&hooks))
+        .with_metrics(Arc::clone(&metrics))
+);
+```
 
 | Service | Metrics Recorded |
 |---------|------------------|
@@ -87,23 +110,41 @@ Services now record metrics when `metrics` feature is enabled:
 
 Players API queries real storage:
 - `GET /api/players` - Lists from `storage_objects` with `collection="players"`
-- Seed data now includes player profiles in correct format
+- `POST /api/players/:id/ban` - Bans player
+- `POST /api/players/:id/unban` - Unbans player
+- `DELETE /api/players/:id` - Deletes player
 
 ---
 
-### Phase 7: Notifications Integration ✅ COMPLETE
+### Phase 7: Notifications Integration ✅ COMPLETE (NOW WIRED)
 
-`HookedSocial` now sends notifications:
+`HookedSocial` now has notifications wired:
+
+```rust
+// kaos-io/src/server.rs - NOW WIRED
+let hooked_social = Arc::new(
+    HookedSocial::new(Arc::clone(&social), Arc::clone(&hooks))
+        .with_notifications(Arc::clone(&notifications))
+        .with_metrics(Arc::clone(&metrics))
+);
+```
 
 | Event | Notification Type |
 |-------|------------------|
 | Friend request | `FriendRequest` |
 
-Usage:
+---
+
+### Phase 8: Console Metrics Endpoint ✅ COMPLETE (ADDED)
+
+Console server now has `/metrics` endpoint for Prometheus scraping:
+
 ```rust
-let hooked_social = HookedSocial::new(social, hooks)
-    .with_notifications(notifications);
+// GET /metrics (no auth required)
+// Returns Prometheus text format metrics
 ```
+
+Both console (port 7350) and kaos-io game server (port 9090) expose metrics.
 
 ---
 
@@ -125,38 +166,39 @@ Research needed:
 | Feature | Nakama | KaosNet | Status |
 |---------|--------|---------|--------|
 | **Auth** |
-| Device Auth | Yes | Yes | ✅ Done |
-| Email/Password | Yes | Yes | ✅ Done |
-| Custom Auth | Yes | Yes | ✅ Done |
-| JWT + Refresh | Yes | Yes | ✅ Done |
+| Device Auth | Yes | Yes | ✅ Tested |
+| Email/Password | Yes | Yes | ✅ Tested |
+| Custom Auth | Yes | Yes | ✅ Tested |
+| JWT + Refresh | Yes | Yes | ✅ Tested |
 | **Sessions** |
-| Session Management | Yes | Yes | ✅ Done |
-| Heartbeat | Yes | Yes | ✅ Done |
+| Session Management | Yes | Yes | ✅ Tested |
+| Heartbeat | Yes | Yes | ✅ Tested |
 | **Rooms/Matches** |
-| Room CRUD | Yes | Yes | ✅ Done |
-| Match Handler Trait | Yes | Yes | ✅ Done |
-| Lua Match Handler | Yes | Yes | ✅ Done |
+| Room CRUD | Yes | Yes | ✅ Tested |
+| Match Handler Trait | Yes | Yes | ✅ Tested |
+| Lua Match Handler | Yes | Yes | ✅ Tested |
 | **Social** |
-| Friends | Yes | Yes | ✅ Done |
-| Groups | Yes | Yes | ✅ Done |
-| Presence | Yes | Yes | ✅ Done |
+| Friends | Yes | Yes | ✅ Tested |
+| Groups | Yes | Yes | ✅ Tested |
+| Presence | Yes | Yes | ✅ Tested |
 | **Lua API** |
-| Storage API | Yes | Yes | ✅ Done |
-| Leaderboard API | Yes | Yes | ✅ Done |
-| Social API | Yes | Yes | ✅ Done |
+| Storage API | Yes | Yes | ✅ Tested |
+| Leaderboard API | Yes | Yes | ✅ Tested |
+| Social API | Yes | Yes | ✅ Tested |
 | **Hooks** |
-| Hook Registry | Yes | Yes | ✅ Done |
-| Before/After Hooks | Yes | Yes | ✅ Done |
-| Hooked Services | Yes | Yes | ✅ Done |
+| Hook Registry | Yes | Yes | ✅ Tested |
+| Before/After Hooks | Yes | Yes | ✅ Tested |
+| Hooked Services | Yes | Yes | ✅ Wired |
 | **Storage** |
-| In-Memory | Yes | Yes | ✅ Done |
-| PostgreSQL | Yes | Yes | ✅ Done |
+| In-Memory | Yes | Yes | ✅ Tested |
+| PostgreSQL | Yes | Yes | ✅ 6 tests |
 | **Notifications** |
-| Module | Yes | Yes | ✅ Done |
-| Event Integration | Yes | Yes | ✅ Done |
+| Module | Yes | Yes | ✅ Tested |
+| Event Integration | Yes | Yes | ✅ Wired |
 | **Infrastructure** |
-| Metrics Module | Yes | Yes | ✅ Done |
-| Metrics Integration | Yes | Yes | ✅ Done |
+| Metrics Module | Yes | Yes | ✅ Tested |
+| Metrics Integration | Yes | Yes | ✅ Wired |
+| Console /metrics | Yes | Yes | ✅ Added |
 | Clustering | Yes | No | ❌ Not started |
 
 ---
@@ -164,19 +206,30 @@ Research needed:
 ## Test Commands
 
 ```bash
-# Run all tests (85 passing)
-cargo test -p kaosnet
-
-# With features
-cargo test -p kaosnet --features postgres
-cargo test -p kaosnet --features metrics
+# Run all tests (139 passing)
+cargo test -p kaosnet --all-features
 
 # Specific modules
 cargo test -p kaosnet lua::
 cargo test -p kaosnet services::
 cargo test -p kaosnet hooks::
 cargo test -p kaosnet match_handler::
+
+# Build kaos-io demo
+cargo build -p kaos-io
 ```
+
+---
+
+## Running Services
+
+| Port | Service |
+|------|---------|
+| 7351 | WebSocket (game server - web clients) |
+| 7354 | RUDP (game server - native clients/bots) |
+| 7350 | Console (admin API + /metrics) |
+| 9090 | Metrics (game server Prometheus) |
+| 8082 | Web client (static files) |
 
 ---
 

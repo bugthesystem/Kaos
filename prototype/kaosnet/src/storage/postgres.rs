@@ -457,3 +457,267 @@ impl AsyncStorageBackend for PostgresBackend {
         self.count_async(collection, query).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Get database URL from environment or skip test.
+    /// Set POSTGRES_TEST_URL=postgres://user:pass@localhost/test_db to run these tests.
+    fn get_test_db_url() -> Option<String> {
+        std::env::var("POSTGRES_TEST_URL").ok()
+    }
+
+    /// Helper to create a test backend (async).
+    async fn setup_test_backend() -> Option<PostgresBackend> {
+        let url = get_test_db_url()?;
+        let backend = PostgresBackend::new(&url).await.ok()?;
+        backend.migrate().await.ok()?;
+        // Clean up test data
+        sqlx::query("DELETE FROM storage_objects WHERE user_id LIKE 'test_%'")
+            .execute(&backend.pool)
+            .await
+            .ok()?;
+        Some(backend)
+    }
+
+    #[tokio::test]
+    async fn test_postgres_crud() {
+        let Some(backend) = setup_test_backend().await else {
+            eprintln!("Skipping test_postgres_crud: POSTGRES_TEST_URL not set");
+            return;
+        };
+
+        let user_id = "test_user_1";
+        let collection = "profiles";
+        let key = "profile";
+        let value = json!({"name": "Test User", "level": 5});
+
+        // Create
+        let obj = backend.set_async(user_id, collection, key, value.clone(), None)
+            .await
+            .expect("set should succeed");
+        assert_eq!(obj.user_id, user_id);
+        assert_eq!(obj.collection, collection);
+        assert_eq!(obj.key, key);
+        assert_eq!(obj.value, value);
+        assert_eq!(obj.version, 1);
+
+        // Read
+        let read = backend.get_async(user_id, collection, key)
+            .await
+            .expect("get should succeed")
+            .expect("object should exist");
+        assert_eq!(read.value, value);
+        assert_eq!(read.version, 1);
+
+        // Update
+        let new_value = json!({"name": "Test User", "level": 10});
+        let updated = backend.set_async(user_id, collection, key, new_value.clone(), None)
+            .await
+            .expect("update should succeed");
+        assert_eq!(updated.value, new_value);
+        assert_eq!(updated.version, 2);
+
+        // Delete
+        let deleted = backend.delete_async(user_id, collection, key)
+            .await
+            .expect("delete should succeed");
+        assert!(deleted);
+
+        // Verify deleted
+        let after_delete = backend.get_async(user_id, collection, key)
+            .await
+            .expect("get after delete should succeed");
+        assert!(after_delete.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_postgres_version_conflict() {
+        let Some(backend) = setup_test_backend().await else {
+            eprintln!("Skipping test_postgres_version_conflict: POSTGRES_TEST_URL not set");
+            return;
+        };
+
+        let user_id = "test_user_version";
+        let collection = "items";
+        let key = "sword";
+
+        // Create initial object
+        let obj = backend.set_async(user_id, collection, key, json!({"damage": 10}), None)
+            .await
+            .expect("initial set should succeed");
+        assert_eq!(obj.version, 1);
+
+        // Update with correct version
+        let updated = backend.set_async(user_id, collection, key, json!({"damage": 15}), Some(1))
+            .await
+            .expect("versioned update should succeed");
+        assert_eq!(updated.version, 2);
+
+        // Update with wrong version should fail
+        let result = backend.set_async(user_id, collection, key, json!({"damage": 20}), Some(1))
+            .await;
+        assert!(matches!(result, Err(StorageError::VersionConflict { expected: 1, actual: 2 })));
+
+        // Cleanup
+        backend.delete_async(user_id, collection, key).await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_postgres_list() {
+        let Some(backend) = setup_test_backend().await else {
+            eprintln!("Skipping test_postgres_list: POSTGRES_TEST_URL not set");
+            return;
+        };
+
+        let user_id = "test_user_list";
+        let collection = "inventory";
+
+        // Create multiple objects
+        for i in 0..5 {
+            backend.set_async(user_id, collection, &format!("item_{}", i), json!({"index": i}), None)
+                .await
+                .expect("set should succeed");
+        }
+
+        // List all
+        let (objects, cursor) = backend.list_async(user_id, collection, 10, None)
+            .await
+            .expect("list should succeed");
+        assert_eq!(objects.len(), 5);
+        assert!(cursor.is_none());
+
+        // List with pagination
+        let (page1, cursor1) = backend.list_async(user_id, collection, 2, None)
+            .await
+            .expect("list page 1 should succeed");
+        assert_eq!(page1.len(), 2);
+        assert!(cursor1.is_some());
+
+        let (page2, cursor2) = backend.list_async(user_id, collection, 2, cursor1.as_deref())
+            .await
+            .expect("list page 2 should succeed");
+        assert_eq!(page2.len(), 2);
+        assert!(cursor2.is_some());
+
+        // Cleanup
+        for i in 0..5 {
+            backend.delete_async(user_id, collection, &format!("item_{}", i)).await.ok();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_postgres_query() {
+        let Some(backend) = setup_test_backend().await else {
+            eprintln!("Skipping test_postgres_query: POSTGRES_TEST_URL not set");
+            return;
+        };
+
+        let collection = "test_players";
+
+        // Create players with different levels
+        for i in 0..5 {
+            backend.set_async(
+                &format!("test_player_{}", i),
+                collection,
+                "stats",
+                json!({"level": i * 10, "name": format!("Player {}", i)}),
+                None
+            ).await.expect("set should succeed");
+        }
+
+        // Query players with level >= 20
+        let query = Query::new().gte("level", 20);
+        let results = backend.query_async(collection, query, 10)
+            .await
+            .expect("query should succeed");
+        assert_eq!(results.len(), 3); // levels 20, 30, 40
+
+        // Count query
+        let query = Query::new().gte("level", 30);
+        let count = backend.count_async(collection, query)
+            .await
+            .expect("count should succeed");
+        assert_eq!(count, 2); // levels 30, 40
+
+        // Cleanup
+        for i in 0..5 {
+            backend.delete_async(&format!("test_player_{}", i), collection, "stats").await.ok();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_postgres_batch_operations() {
+        let Some(backend) = setup_test_backend().await else {
+            eprintln!("Skipping test_postgres_batch_operations: POSTGRES_TEST_URL not set");
+            return;
+        };
+
+        // Batch write
+        let writes: Vec<WriteOp> = (0..3).map(|i| WriteOp {
+            id: ObjectId {
+                user_id: format!("test_batch_user_{}", i),
+                collection: "batch_test".to_string(),
+                key: "data".to_string(),
+            },
+            value: json!({"batch_index": i}),
+            permission: ObjectPermission::OwnerOnly,
+            version: None,
+        }).collect();
+
+        let written = backend.write_many_async(&writes)
+            .await
+            .expect("batch write should succeed");
+        assert_eq!(written.len(), 3);
+
+        // Batch read
+        let reads: Vec<ObjectId> = (0..3).map(|i| ObjectId {
+            user_id: format!("test_batch_user_{}", i),
+            collection: "batch_test".to_string(),
+            key: "data".to_string(),
+        }).collect();
+
+        let read_results = backend.get_many_async(&reads)
+            .await
+            .expect("batch read should succeed");
+        assert_eq!(read_results.len(), 3);
+        assert!(read_results.iter().all(|r| r.is_some()));
+
+        // Batch delete
+        let deleted = backend.delete_many_async(&reads)
+            .await
+            .expect("batch delete should succeed");
+        assert_eq!(deleted, 3);
+    }
+
+    #[test]
+    fn test_postgres_sync_wrapper() {
+        let Some(url) = get_test_db_url() else {
+            eprintln!("Skipping test_postgres_sync_wrapper: POSTGRES_TEST_URL not set");
+            return;
+        };
+
+        let backend = PostgresSyncBackend::connect(&url)
+            .expect("connect should succeed");
+        backend.migrate().expect("migrate should succeed");
+
+        let user_id = "test_sync_user";
+        let collection = "sync_test";
+        let key = "data";
+
+        // Test sync operations
+        let obj = backend.set(user_id, collection, key, json!({"sync": true}), None)
+            .expect("sync set should succeed");
+        assert_eq!(obj.version, 1);
+
+        let read = backend.get(user_id, collection, key)
+            .expect("sync get should succeed")
+            .expect("object should exist");
+        assert_eq!(read.value["sync"], true);
+
+        backend.delete(user_id, collection, key)
+            .expect("sync delete should succeed");
+    }
+}

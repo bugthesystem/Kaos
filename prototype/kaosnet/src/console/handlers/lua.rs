@@ -31,7 +31,7 @@ pub struct ExecuteRpcRequest {
 }
 
 /// GET /api/lua/scripts
-pub async fn list_scripts(req: Request, ctx: Arc<ServerContext>) -> Response {
+pub async fn list_scripts(req: Request, _ctx: Arc<ServerContext>) -> Response {
     // Check permission
     if !check_permission(&req, Permission::ViewLua) {
         return Response::forbidden().json(&serde_json::json!({

@@ -37,10 +37,10 @@ use std::net::{SocketAddr, UdpSocket};
 const SEND_BUFFER_SIZE: usize = 65536;
 /// Large message assembly buffer (4KB typical MTU-friendly size)
 const LARGE_MSG_SIZE: usize = 4096;
-/// Per-packet receive buffer (2KB > typical MTU 1500)
-const RECV_PACKET_SIZE: usize = 2048;
-/// Batch size for recvmmsg (64 packets per syscall)
-const RECV_BATCH_SIZE: usize = 64;
+/// Per-packet receive buffer (64KB to handle large game state payloads)
+const RECV_PACKET_SIZE: usize = 65536;
+/// Batch size for recvmmsg (16 packets per syscall - reduced due to larger buffers)
+const RECV_BATCH_SIZE: usize = 16;
 /// Socket buffer size (8MB for high throughput)
 const SOCKET_BUFFER_SIZE: i32 = 8 * 1024 * 1024;
 
@@ -141,9 +141,12 @@ impl RudpTransport {
         let socket = UdpSocket::bind(bind_addr)?;
         socket.set_nonblocking(true)?;
 
-        // Create NAK socket on port+1
-        let nak_port = bind_addr.port() + 1;
-        let nak_bind_addr = SocketAddr::new(bind_addr.ip(), nak_port);
+        // Get actual bound port (important when bind_addr uses port 0)
+        let actual_addr = socket.local_addr()?;
+
+        // Create NAK socket on actual_port+1
+        let nak_port = actual_addr.port() + 1;
+        let nak_bind_addr = SocketAddr::new(actual_addr.ip(), nak_port);
         let nak_socket = UdpSocket::bind(nak_bind_addr)?;
         nak_socket.set_nonblocking(true)?;
 
@@ -701,7 +704,8 @@ impl RudpTransport {
                             if len >= ReliableUdpHeader::SIZE + payload_len {
                                 let payload = &data[ReliableUdpHeader::SIZE
                                     ..ReliableUdpHeader::SIZE + payload_len];
-                                if header.verify_checksum(payload) {
+                                let checksum_ok = header.verify_checksum(payload);
+                                if checksum_ok {
                                     self.recv_window.insert(header.sequence, payload);
                                 }
                             }

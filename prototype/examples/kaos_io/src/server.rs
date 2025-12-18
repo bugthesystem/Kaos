@@ -11,6 +11,7 @@
 //! - Leaderboard service for persistent high scores (accessible from Lua)
 //! - Room management
 
+// RUDP support for native clients (bots, native apps)
 use kaos_rudp::RudpServer;
 use kaosnet::{
     RoomConfig, RoomRegistry, SessionRegistry,
@@ -21,6 +22,8 @@ use kaosnet::{
     // Hooks
     HookRegistry, HookOperation, HookContext, BeforeHook, AfterHook, BeforeHookResult,
     hooks::Result as HookResult,
+    // Hooked Services (with metrics and notifications integration)
+    HookedStorage, HookedLeaderboards, HookedSocial,
     // Console server
     ConsoleServer, ConsoleConfig,
     // Unified transport from kaosnet
@@ -40,10 +43,30 @@ use std::time::{Duration, Instant};
 // ==================== Network Types ====================
 // Game state is entirely managed by Lua - no Rust game state structs needed!
 
-/// Transport type for clients
+/// Transport type for clients (WebSocket for web, RUDP for native)
 enum ClientTransportType {
     WebSocket(WsClientTransport),
-    Rudp(SocketAddr),
+    Rudp(SocketAddr), // RUDP clients identified by address
+}
+
+impl ClientTransportType {
+    fn is_open(&self) -> bool {
+        match self {
+            ClientTransportType::WebSocket(ws) => ws.is_open(),
+            ClientTransportType::Rudp(_) => true, // RUDP uses timeout-based disconnect
+        }
+    }
+
+    fn is_rudp(&self) -> bool {
+        matches!(self, ClientTransportType::Rudp(_))
+    }
+
+    fn rudp_addr(&self) -> Option<SocketAddr> {
+        match self {
+            ClientTransportType::Rudp(addr) => Some(*addr),
+            _ => None,
+        }
+    }
 }
 
 /// Connected client with transport and identity
@@ -136,12 +159,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sessions = Arc::new(SessionRegistry::new());
     let rooms = Arc::new(RoomRegistry::new());
     let leaderboards = Arc::new(Leaderboards::new());
-    let storage = Arc::new(Storage::new());
-    let _chat = Arc::new(Chat::new());
-    let _matchmaker = Arc::new(Matchmaker::new());
-    let _notifications = Arc::new(Notifications::new());
-    let _social = Arc::new(Social::new());
-    let _tournaments = Arc::new(Tournaments::new());
+
+    // Storage: Use PostgreSQL if DATABASE_URL is set, otherwise in-memory
+    let storage = if let Ok(db_url) = std::env::var("DATABASE_URL") {
+        println!("Connecting to PostgreSQL: {}...", db_url.split('@').last().unwrap_or("***"));
+        #[cfg(feature = "postgres")]
+        {
+            use kaosnet::storage::PostgresSyncBackend;
+            match PostgresSyncBackend::connect(&db_url) {
+                Ok(backend) => {
+                    if let Err(e) = backend.migrate() {
+                        eprintln!("Warning: Migration failed: {}", e);
+                    }
+                    println!("✓ PostgreSQL storage connected");
+                    Arc::new(Storage::with_backend(Arc::new(backend)))
+                }
+                Err(e) => {
+                    eprintln!("Warning: PostgreSQL connection failed: {}, using in-memory", e);
+                    Arc::new(Storage::new())
+                }
+            }
+        }
+        #[cfg(not(feature = "postgres"))]
+        {
+            eprintln!("Warning: DATABASE_URL set but postgres feature not enabled, using in-memory");
+            Arc::new(Storage::new())
+        }
+    } else {
+        println!("✓ In-memory storage (set DATABASE_URL for PostgreSQL)");
+        Arc::new(Storage::new())
+    };
+
+    let chat = Arc::new(Chat::new());
+    let matchmaker = Arc::new(Matchmaker::new());
+    let notifications = Arc::new(Notifications::new());
+    let social = Arc::new(Social::new());
+    let tournaments = Arc::new(Tournaments::new());
 
     // Initialize Authentication service with secret key
     let auth = Arc::new(AuthService::new("kaos-io-game-secret-key"));
@@ -149,6 +202,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize Hooks registry
     let hooks = Arc::new(HookRegistry::new());
+
+    // Create Hooked Services with metrics and notifications integration
+    let hooked_storage = Arc::new(
+        HookedStorage::new(Arc::clone(&storage), Arc::clone(&hooks))
+            .with_metrics(Arc::clone(&metrics))
+    );
+    let hooked_leaderboards = Arc::new(
+        HookedLeaderboards::new(Arc::clone(&leaderboards), Arc::clone(&hooks))
+            .with_metrics(Arc::clone(&metrics))
+    );
+    let hooked_social = Arc::new(
+        HookedSocial::new(Arc::clone(&social), Arc::clone(&hooks))
+            .with_notifications(Arc::clone(&notifications))
+            .with_metrics(Arc::clone(&metrics))
+    );
+    println!("✓ Hooked services initialized (storage, leaderboards, social with metrics)");
 
     // Register before hook for storage writes - validates data before saving
     hooks.register_before(HookOperation::StorageWrite, StorageValidationHook);
@@ -176,11 +245,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ Storage service initialized (with NoRead/OwnerOnly/PublicRead permissions)");
 
     // ==================== Lua Runtime Setup ====================
-    // Create LuaServices for Lua script access to storage/leaderboards
-    let lua_services = Arc::new(LuaServices::new(
-        Arc::clone(&storage),
-        Arc::clone(&leaderboards),
-        Arc::new(Social::new()),
+    // Create LuaServices with HOOKED services for Lua script access
+    // This ensures Lua scripts get metrics, hooks, and notifications!
+    let lua_services = Arc::new(LuaServices::with_hooked_services(
+        Arc::clone(&hooked_storage),
+        Arc::clone(&hooked_leaderboards),
+        Arc::clone(&hooked_social),
     ));
 
     // Create Lua runtime with services
@@ -219,7 +289,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!();
     println!("Server Configuration:");
-    println!("  Web Game:  http://0.0.0.0:8080");
+    println!("  Web Game:  http://0.0.0.0:8082");
     println!("  WebSocket: ws://0.0.0.0:7351 (web clients)");
     println!("  RUDP:      udp://0.0.0.0:7354 (native clients)");
     println!("  Console:   http://0.0.0.0:7350");
@@ -242,6 +312,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start Console API server in background thread
     let console_sessions = Arc::clone(&sessions);
     let console_rooms = Arc::clone(&rooms);
+    let console_storage = Arc::clone(&storage);
+    let console_leaderboards = Arc::clone(&leaderboards);
+    let console_social = Arc::clone(&social);
+    let console_chat = Arc::clone(&chat);
+    let console_matchmaker = Arc::clone(&matchmaker);
+    let console_notifications = Arc::clone(&notifications);
+    let console_tournaments = Arc::clone(&tournaments);
+    let console_metrics = Arc::clone(&metrics);
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
@@ -250,11 +328,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 bind_addr: "0.0.0.0:7350".to_string(),
                 ..ConsoleConfig::default()
             };
-            let console = ConsoleServer::new(
+            let console = ConsoleServer::builder(
                 console_config,
                 console_sessions,
                 console_rooms,
-            );
+            )
+            .metrics(console_metrics)
+            .storage(console_storage)
+            .leaderboards(console_leaderboards)
+            .social(console_social)
+            .chat(console_chat)
+            .matchmaker(console_matchmaker)
+            .notifications(console_notifications)
+            .tournaments(console_tournaments)
+            .build();
 
             if let Err(e) = console.serve().await {
                 eprintln!("Console server error: {}", e);
@@ -297,7 +384,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         use std::net::TcpListener;
         use std::path::Path;
 
-        let listener = TcpListener::bind("0.0.0.0:8080").expect("Failed to bind web server");
+        let listener = TcpListener::bind("0.0.0.0:8082").expect("Failed to bind web server");
         for stream in listener.incoming() {
             if let Ok(mut stream) = stream {
                 let buf_reader = BufReader::new(&stream);
@@ -334,16 +421,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    println!("✓ Web client available at http://0.0.0.0:8080");
+    println!("✓ Web client available at http://0.0.0.0:8082");
 
     // Start WebSocket server using kaosnet transport abstraction
     let mut ws_server = WsServerTransport::bind("0.0.0.0:7351")?;
     ws_server.set_nonblocking(true)?;
-    println!("WebSocket server listening on 0.0.0.0:7351");
+    println!("✓ WebSocket server on 0.0.0.0:7351 (web clients)");
+
+    // Start RUDP server for native clients (bots, native apps)
+    let mut rudp_server = RudpServer::bind("0.0.0.0:7354", 256)?;
+    println!("✓ RUDP server on 0.0.0.0:7354 (native clients/bots)");
     println!("Waiting for players...\n");
 
     // Client tracking (game state is managed by Lua)
     let mut clients: HashMap<u64, Client> = HashMap::new();
+    // Map RUDP address -> session_id for reverse lookup
+    let mut rudp_sessions: HashMap<SocketAddr, u64> = HashMap::new();
     let mut next_session_id: u64 = 1;
     let mut tick: u64 = 0;
 
@@ -413,7 +506,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Track client connection
                 clients.insert(session_id, Client {
-                    transport,
+                    transport: ClientTransportType::WebSocket(transport),
                     user_id,
                     username,
                 });
@@ -428,9 +521,100 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(_) => {}
         }
 
+        // ==================== Accept RUDP Connections ====================
+        // Poll for incoming RUDP packets (creates client state on first packet)
+        rudp_server.poll();
+
+        // Handle new RUDP clients
+        while let Some(rudp_addr) = rudp_server.accept() {
+            // Check if we already know this client
+            if rudp_sessions.contains_key(&rudp_addr) {
+                continue;
+            }
+
+            let session_id = next_session_id;
+            next_session_id += 1;
+
+            // Create device ID from RUDP address
+            let device_id = format!("rudp_{}", rudp_addr);
+            let auth_request = DeviceAuthRequest {
+                device_id: device_id.clone(),
+                create: true,
+                username: Some(format!("RudpPlayer{}", session_id)),
+            };
+            let auth_response = match auth.authenticate_device(&auth_request) {
+                Ok(response) => response,
+                Err(e) => {
+                    eprintln!("[!] RUDP auth failed for {}: {:?}", rudp_addr, e);
+                    rudp_server.disconnect(&rudp_addr);
+                    continue;
+                }
+            };
+
+            let user_id = auth_response.account.id.clone();
+            let username = auth_response.account.username.clone()
+                .unwrap_or_else(|| format!("RudpPlayer{}", session_id));
+
+            // Execute match join hook
+            let hook_ctx = HookContext {
+                user_id: Some(user_id.clone()),
+                username: Some(username.clone()),
+                session_id: Some(session_id),
+                ..Default::default()
+            };
+            let hook_payload = serde_json::json!({
+                "device_id": device_id,
+                "session_id": session_id,
+                "transport": "rudp"
+            });
+            let hook_result_val = serde_json::json!({"status": "joined"});
+            hooks.execute_after(
+                HookOperation::MatchJoin,
+                &hook_ctx,
+                &hook_payload,
+                &hook_result_val,
+            );
+
+            // Join the Lua match
+            let presence = MatchPresence {
+                user_id: user_id.clone(),
+                session_id,
+                username: username.clone(),
+                node: None,
+            };
+            if let Err(e) = match_registry.join(&game_match_id, presence) {
+                eprintln!("[!] RUDP failed to join match: {:?}", e);
+                rudp_server.disconnect(&rudp_addr);
+                continue;
+            }
+
+            println!("[+] {} joined via RUDP (session={}, addr={})", username, session_id, rudp_addr);
+
+            // Track RUDP client
+            rudp_sessions.insert(rudp_addr, session_id);
+            clients.insert(session_id, Client {
+                transport: ClientTransportType::Rudp(rudp_addr),
+                user_id,
+                username,
+            });
+
+            // Update metrics
+            metrics.sessions_total.inc();
+            if let Some(room) = rooms.get(&game_room_id) {
+                let _ = room.add_player(session_id);
+            }
+        }
+
         // ==================== Process Client Messages ====================
         let mut disconnected: Vec<u64> = Vec::new();
+
+        // Process WebSocket client messages
         for (session_id, client) in clients.iter_mut() {
+            // Skip RUDP clients (handled separately below)
+            if client.transport.is_rudp() {
+                continue;
+            }
+
             if !client.transport.is_open() {
                 disconnected.push(*session_id);
                 continue;
@@ -443,32 +627,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let match_registry_ref = &match_registry;
             let game_match_id_ref = &game_match_id;
 
-            client.transport.receive(|data| {
-                // Forward raw message to Lua match as MatchMessage
-                let presence = MatchPresence {
-                    user_id: user_id.clone(),
-                    session_id: session_id_copy,
-                    username: username.clone(),
-                    node: None,
-                };
+            // WebSocket receive
+            if let ClientTransportType::WebSocket(ws) = &mut client.transport {
+                ws.receive(&mut |data: &[u8]| {
+                    let presence = MatchPresence {
+                        user_id: user_id.clone(),
+                        session_id: session_id_copy,
+                        username: username.clone(),
+                        node: None,
+                    };
 
-                let message = MatchMessage {
-                    sender: presence,
-                    op_code: 1, // Custom opcode for game input
-                    data: data.to_vec(),
-                    reliable: true,
-                    received_at: tick,
-                };
+                    let message = MatchMessage {
+                        sender: presence,
+                        op_code: 1,
+                        data: data.to_vec(),
+                        reliable: true,
+                        received_at: tick,
+                    };
 
-                if let Err(e) = match_registry_ref.send_message(game_match_id_ref, message) {
-                    eprintln!("[!] Failed to send message to match: {:?}", e);
-                }
-            });
+                    if let Err(e) = match_registry_ref.send_message(game_match_id_ref, message) {
+                        eprintln!("[!] Failed to send message to match: {:?}", e);
+                    }
+                });
+            }
+        }
+
+        // Process RUDP client messages (receive from all at once via server)
+        for (&rudp_addr, &session_id) in &rudp_sessions {
+            if let Some(client) = clients.get(&session_id) {
+                let user_id = client.user_id.clone();
+                let username = client.username.clone();
+
+                // Receive messages from this RUDP client
+                rudp_server.receive(&rudp_addr, |data| {
+                    let presence = MatchPresence {
+                        user_id: user_id.clone(),
+                        session_id,
+                        username: username.clone(),
+                        node: None,
+                    };
+
+                    let message = MatchMessage {
+                        sender: presence,
+                        op_code: 1,
+                        data: data.to_vec(),
+                        reliable: true,
+                        received_at: tick,
+                    };
+
+                    if let Err(e) = match_registry.send_message(&game_match_id, message) {
+                        eprintln!("[!] RUDP message forward error: {:?}", e);
+                    }
+                });
+            }
         }
 
         // ==================== Handle Disconnections ====================
         for session_id in &disconnected {
             if let Some(client) = clients.remove(session_id) {
+                // Clean up RUDP session mapping if this was an RUDP client
+                if let Some(addr) = client.transport.rudp_addr() {
+                    rudp_sessions.remove(&addr);
+                    rudp_server.disconnect(&addr);
+                }
+
                 // Execute match leave hook
                 let hook_ctx = HookContext {
                     user_id: Some(client.user_id.clone()),
@@ -492,7 +714,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("[!] Failed to leave match: {:?}", e);
                 }
 
-                println!("[-] {} left (session={})", client.username, session_id);
+                let transport_type = if client.transport.is_rudp() { "RUDP" } else { "WS" };
+                println!("[-] {} left via {} (session={})", client.username, transport_type, session_id);
 
                 if let Some(room) = rooms.get(&game_room_id) {
                     room.remove_player(*session_id);
@@ -520,24 +743,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let state_json = serde_json::to_vec(&broadcast_data).unwrap_or_default();
 
+            // Broadcast to WebSocket clients
             for client in clients.values_mut() {
-                if client.transport.is_open() {
-                    let _ = client.transport.send(&state_json);
+                if let ClientTransportType::WebSocket(ws) = &mut client.transport {
+                    if ws.is_open() {
+                        let _ = ws.send(&state_json);
+                    }
                 }
+            }
+
+            // Broadcast to RUDP clients
+            for &rudp_addr in rudp_sessions.keys() {
+                let _ = rudp_server.send(&rudp_addr, &state_json);
             }
         }
 
         tick += 1;
 
         // Update metrics every tick
+        let ws_count = clients.values().filter(|c| !c.transport.is_rudp()).count();
+        let rudp_count = rudp_sessions.len();
         metrics.sessions_active.set(clients.len() as i64);
-        metrics.websocket_connections.set(clients.len() as i64);
+        metrics.websocket_connections.set(ws_count as i64);
         metrics.rooms_active.set(rooms.count() as i64);
 
         // Periodic status
         if tick % (TICK_RATE as u64 * 10) == 0 && !clients.is_empty() {
             let lb_count = leaderboards.count(LEADERBOARD_ID).unwrap_or(0);
-            println!("[tick {}] {} players online, {} on leaderboard", tick, clients.len(), lb_count);
+            println!("[tick {}] {} players ({}WS + {}RUDP), {} on leaderboard",
+                tick, clients.len(), ws_count, rudp_count, lb_count);
         }
 
         // Sleep for remaining tick time

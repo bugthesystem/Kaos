@@ -12,8 +12,12 @@ path = "src/server.rs"
 name = "asteroids-client"
 path = "src/client.rs"
 
+[features]
+default = ["postgres"]
+postgres = ["kaosnet/postgres"]
+
 [dependencies]
-kaosnet = { path = "../../kaosnet", features = ["lua", "console", "auth"] }
+kaosnet = { path = "../../kaosnet", features = ["lua", "console", "auth", "metrics"] }
 kaos-rudp = { path = "../../../kaos-rudp" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 bytemuck = "1"

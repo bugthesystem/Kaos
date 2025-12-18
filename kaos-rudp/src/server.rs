@@ -320,9 +320,10 @@ impl RudpServer {
                     if let Some((header, payload)) =
                         ReliableUdpHeader::from_packet_with_payload_check(&buf[..len])
                     {
+                        let seq = header.sequence;
                         match header.msg_type {
                             t if t == MessageType::Ack as u8 => {
-                                ack_events.push((client_addr, header.sequence));
+                                ack_events.push((client_addr, seq));
                             }
                             t if t == MessageType::Nak as u8 => {
                                 // Parse batch NAK payload
@@ -350,6 +351,8 @@ impl RudpServer {
         // Process ACK events
         for (client_addr, acked_seq) in ack_events {
             if let Some(client) = self.clients.get_mut(&client_addr) {
+                // Update last_seen on ACK to prevent timeout
+                client.touch();
                 if acked_seq > client.acked_seq {
                     let newly_acked = acked_seq - client.acked_seq;
                     for _ in 0..newly_acked {

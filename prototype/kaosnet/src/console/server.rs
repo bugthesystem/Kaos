@@ -6,6 +6,8 @@ use crate::console::handlers;
 use crate::console::storage::{AccountStore, ApiKeyStore};
 use crate::leaderboard::Leaderboards;
 use crate::matchmaker::Matchmaker;
+#[cfg(feature = "metrics")]
+use crate::metrics::Metrics;
 use crate::notifications::Notifications;
 use crate::ratelimit::{RateLimiter, RateLimitPresets};
 use crate::room::RoomRegistry;
@@ -57,6 +59,9 @@ pub struct ServerContext {
     pub chat: Arc<Chat>,
     pub matchmaker: Arc<Matchmaker>,
     pub notifications: Arc<Notifications>,
+    // Metrics (optional)
+    #[cfg(feature = "metrics")]
+    pub metrics: Option<Arc<Metrics>>,
 }
 
 /// Console HTTP server for admin interface.
@@ -77,6 +82,8 @@ pub struct ConsoleServerBuilder {
     chat: Option<Arc<Chat>>,
     matchmaker: Option<Arc<Matchmaker>>,
     notifications: Option<Arc<Notifications>>,
+    #[cfg(feature = "metrics")]
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl ConsoleServerBuilder {
@@ -97,6 +104,8 @@ impl ConsoleServerBuilder {
             chat: None,
             matchmaker: None,
             notifications: None,
+            #[cfg(feature = "metrics")]
+            metrics: None,
         }
     }
 
@@ -142,6 +151,13 @@ impl ConsoleServerBuilder {
         self
     }
 
+    /// Set metrics service.
+    #[cfg(feature = "metrics")]
+    pub fn metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
     /// Build the console server.
     pub fn build(self) -> ConsoleServer {
         let accounts = Arc::new(AccountStore::new());
@@ -178,6 +194,8 @@ impl ConsoleServerBuilder {
             chat: self.chat.unwrap_or_else(|| Arc::new(Chat::new())),
             matchmaker: self.matchmaker.unwrap_or_else(|| Arc::new(Matchmaker::new())),
             notifications: self.notifications.unwrap_or_else(|| Arc::new(Notifications::new())),
+            #[cfg(feature = "metrics")]
+            metrics: self.metrics,
         });
 
         ConsoleServer { config: self.config, ctx }
@@ -223,10 +241,30 @@ impl ConsoleServer {
     fn build_router(&self) -> Router {
         let ctx = Arc::clone(&self.ctx);
 
-        Router::new()
+        let mut router = Router::new()
             // Health check (no auth)
-            .get("/health", |_| async { Response::ok().json(&serde_json::json!({"status": "ok"})) })
+            .get("/health", |_| async { Response::ok().json(&serde_json::json!({"status": "ok"})) });
 
+        // Metrics endpoint (Prometheus scrape, no auth)
+        #[cfg(feature = "metrics")]
+        {
+            let metrics = ctx.metrics.clone();
+            router = router.get("/metrics", move |_| {
+                let metrics = metrics.clone();
+                async move {
+                    match metrics {
+                        Some(m) => Response::ok()
+                            .header("Content-Type", "text/plain; version=0.0.4")
+                            .body(m.gather()),
+                        None => Response::ok()
+                            .header("Content-Type", "text/plain; version=0.0.4")
+                            .body("# No metrics configured\n".to_string()),
+                    }
+                }
+            });
+        }
+
+        router
             // Auth routes
             .post("/api/auth/login", {
                 let auth = Arc::clone(&ctx.auth);
@@ -739,7 +777,7 @@ impl AuthMiddleware {
 
     fn is_public_path(&self, path: &str) -> bool {
         // Always public
-        if path == "/health" || path == "/api/auth/login" {
+        if path == "/health" || path == "/api/auth/login" || path == "/metrics" {
             return true;
         }
 

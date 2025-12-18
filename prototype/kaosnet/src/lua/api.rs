@@ -7,19 +7,30 @@ use mlua::{Function, Lua, Result as LuaResult, Table, UserData, Value};
 use uuid::Uuid;
 
 use super::HookRegistry;
+use crate::hooks::HookContext;
 use crate::leaderboard::{LeaderboardConfig, Leaderboards, ResetSchedule, ScoreOperator, SortOrder};
+use crate::services::{HookedLeaderboards, HookedSocial, HookedStorage};
 use crate::social::{PresenceStatus, Social};
 use crate::storage::Storage;
 
-/// Services available to Lua scripts
+/// Services available to Lua scripts.
+///
+/// Supports both raw services (for backwards compatibility) and hooked services
+/// (for metrics, notifications, and hook integration).
 #[derive(Clone)]
 pub struct LuaServices {
+    // Raw services (legacy)
     pub storage: Arc<Storage>,
     pub leaderboards: Arc<Leaderboards>,
     pub social: Arc<Social>,
+    // Hooked services (preferred - enables metrics, hooks, notifications)
+    hooked_storage: Option<Arc<HookedStorage>>,
+    hooked_leaderboards: Option<Arc<HookedLeaderboards>>,
+    hooked_social: Option<Arc<HookedSocial>>,
 }
 
 impl LuaServices {
+    /// Create with raw services (legacy mode - no hooks/metrics).
     pub fn new(
         storage: Arc<Storage>,
         leaderboards: Arc<Leaderboards>,
@@ -29,7 +40,32 @@ impl LuaServices {
             storage,
             leaderboards,
             social,
+            hooked_storage: None,
+            hooked_leaderboards: None,
+            hooked_social: None,
         }
+    }
+
+    /// Create with hooked services (enables metrics, hooks, notifications).
+    pub fn with_hooked_services(
+        hooked_storage: Arc<HookedStorage>,
+        hooked_leaderboards: Arc<HookedLeaderboards>,
+        hooked_social: Arc<HookedSocial>,
+    ) -> Self {
+        Self {
+            // Keep references to inner services for backwards compat
+            storage: Arc::clone(hooked_storage.inner()),
+            leaderboards: Arc::clone(hooked_leaderboards.inner()),
+            social: Arc::clone(hooked_social.inner()),
+            hooked_storage: Some(hooked_storage),
+            hooked_leaderboards: Some(hooked_leaderboards),
+            hooked_social: Some(hooked_social),
+        }
+    }
+
+    /// Check if using hooked services.
+    pub fn is_hooked(&self) -> bool {
+        self.hooked_storage.is_some()
     }
 }
 
@@ -192,8 +228,21 @@ impl LuaApi {
                     .app_data_ref::<ServicesHandle>()
                     .ok_or_else(|| mlua::Error::external("services not initialized"))?;
 
-                match services.0.storage.get(&user_id, &collection, &key) {
-                    Ok(Some(obj)) => {
+                // Use hooked service if available, otherwise fall back to raw
+                let result = if let Some(ref hooked) = services.0.hooked_storage {
+                    let ctx = HookContext {
+                        user_id: Some(user_id.clone()),
+                        ..Default::default()
+                    };
+                    hooked.get(&ctx, &user_id, &collection, &key)
+                        .map_err(|e| mlua::Error::external(e))?
+                } else {
+                    services.0.storage.get(&user_id, &collection, &key)
+                        .map_err(|e| mlua::Error::external(e))?
+                };
+
+                match result {
+                    Some(obj) => {
                         let result = lua.create_table()?;
                         result.set("user_id", obj.user_id.as_str())?;
                         result.set("collection", obj.collection.as_str())?;
@@ -202,8 +251,7 @@ impl LuaApi {
                         result.set("version", obj.version)?;
                         Ok(Value::Table(result))
                     }
-                    Ok(None) => Ok(Value::Nil),
-                    Err(e) => Err(mlua::Error::external(e)),
+                    None => Ok(Value::Nil),
                 }
             })?;
         kaos.set("storage_read", storage_read)?;
@@ -217,17 +265,25 @@ impl LuaApi {
 
                 let json_value = lua_to_serde(&value)?;
 
-                match services.0.storage.set(&user_id, &collection, &key, json_value) {
-                    Ok(obj) => {
-                        let result = lua.create_table()?;
-                        result.set("user_id", obj.user_id.as_str())?;
-                        result.set("collection", obj.collection.as_str())?;
-                        result.set("key", obj.key.as_str())?;
-                        result.set("version", obj.version)?;
-                        Ok(result)
-                    }
-                    Err(e) => Err(mlua::Error::external(e)),
-                }
+                // Use hooked service if available, otherwise fall back to raw
+                let obj = if let Some(ref hooked) = services.0.hooked_storage {
+                    let ctx = HookContext {
+                        user_id: Some(user_id.clone()),
+                        ..Default::default()
+                    };
+                    hooked.set(&ctx, &user_id, &collection, &key, json_value)
+                        .map_err(|e| mlua::Error::external(e))?
+                } else {
+                    services.0.storage.set(&user_id, &collection, &key, json_value)
+                        .map_err(|e| mlua::Error::external(e))?
+                };
+
+                let result = lua.create_table()?;
+                result.set("user_id", obj.user_id.as_str())?;
+                result.set("collection", obj.collection.as_str())?;
+                result.set("key", obj.key.as_str())?;
+                result.set("version", obj.version)?;
+                Ok(result)
             },
         )?;
         kaos.set("storage_write", storage_write)?;
@@ -239,10 +295,20 @@ impl LuaApi {
                     .app_data_ref::<ServicesHandle>()
                     .ok_or_else(|| mlua::Error::external("services not initialized"))?;
 
-                match services.0.storage.delete(&user_id, &collection, &key) {
-                    Ok(deleted) => Ok(deleted),
-                    Err(e) => Err(mlua::Error::external(e)),
-                }
+                // Use hooked service if available, otherwise fall back to raw
+                let deleted = if let Some(ref hooked) = services.0.hooked_storage {
+                    let ctx = HookContext {
+                        user_id: Some(user_id.clone()),
+                        ..Default::default()
+                    };
+                    hooked.delete(&ctx, &user_id, &collection, &key)
+                        .map_err(|e| mlua::Error::external(e))?
+                } else {
+                    services.0.storage.delete(&user_id, &collection, &key)
+                        .map_err(|e| mlua::Error::external(e))?
+                };
+
+                Ok(deleted)
             })?;
         kaos.set("storage_delete", storage_delete)?;
 
@@ -253,6 +319,7 @@ impl LuaApi {
                     .app_data_ref::<ServicesHandle>()
                     .ok_or_else(|| mlua::Error::external("services not initialized"))?;
 
+                // List doesn't have hooks, use raw storage
                 match services.0.storage.list(&user_id, &collection, limit, None) {
                     Ok((objects, _cursor)) => {
                         let result = lua.create_table()?;
@@ -280,6 +347,7 @@ impl LuaApi {
         // kaos.leaderboard_create(id, name, sort_order, operator) -> boolean
         // sort_order: "descending" or "ascending"
         // operator: "best", "latest", "sum", "increment"
+        // Note: create() has no hooks, uses raw service
         let leaderboard_create = lua.create_function(
             |lua, (id, name, sort_order, operator): (String, String, String, String)| {
                 let services = lua
@@ -329,21 +397,26 @@ impl LuaApi {
                     Some(lua_to_serde(&metadata)?)
                 };
 
-                match services
-                    .0
-                    .leaderboards
-                    .submit(&id, &user_id, &username, score, meta)
-                {
-                    Ok(record) => {
-                        let result = lua.create_table()?;
-                        result.set("user_id", record.user_id.as_str())?;
-                        result.set("username", record.username.as_str())?;
-                        result.set("score", record.score)?;
-                        result.set("num_submissions", record.num_submissions)?;
-                        Ok(result)
-                    }
-                    Err(e) => Err(mlua::Error::external(e)),
-                }
+                // Use hooked service if available (records metrics)
+                let record = if let Some(ref hooked) = services.0.hooked_leaderboards {
+                    let ctx = HookContext {
+                        user_id: Some(user_id.clone()),
+                        username: Some(username.clone()),
+                        ..Default::default()
+                    };
+                    hooked.submit(&ctx, &id, &user_id, &username, score, meta)
+                        .map_err(|e| mlua::Error::external(e))?
+                } else {
+                    services.0.leaderboards.submit(&id, &user_id, &username, score, meta)
+                        .map_err(|e| mlua::Error::external(e))?
+                };
+
+                let result = lua.create_table()?;
+                result.set("user_id", record.user_id.as_str())?;
+                result.set("username", record.username.as_str())?;
+                result.set("score", record.score)?;
+                result.set("num_submissions", record.num_submissions)?;
+                Ok(result)
             },
         )?;
         kaos.set("leaderboard_submit", leaderboard_submit)?;
@@ -354,26 +427,32 @@ impl LuaApi {
                 .app_data_ref::<ServicesHandle>()
                 .ok_or_else(|| mlua::Error::external("services not initialized"))?;
 
-            match services.0.leaderboards.get_top(&id, limit) {
-                Ok(records) => {
-                    let result = lua.create_table()?;
-                    for (i, record) in records.iter().enumerate() {
-                        let item = lua.create_table()?;
-                        item.set("user_id", record.user_id.as_str())?;
-                        item.set("username", record.username.as_str())?;
-                        item.set("score", record.score)?;
-                        item.set("rank", record.rank.unwrap_or(0))?;
-                        item.set("num_submissions", record.num_submissions)?;
-                        result.set(i + 1, item)?;
-                    }
-                    Ok(result)
-                }
-                Err(e) => Err(mlua::Error::external(e)),
+            // Use hooked service if available
+            let records = if let Some(ref hooked) = services.0.hooked_leaderboards {
+                let ctx = HookContext::default();
+                hooked.get_top(&ctx, &id, limit)
+                    .map_err(|e| mlua::Error::external(e))?
+            } else {
+                services.0.leaderboards.get_top(&id, limit)
+                    .map_err(|e| mlua::Error::external(e))?
+            };
+
+            let result = lua.create_table()?;
+            for (i, record) in records.iter().enumerate() {
+                let item = lua.create_table()?;
+                item.set("user_id", record.user_id.as_str())?;
+                item.set("username", record.username.as_str())?;
+                item.set("score", record.score)?;
+                item.set("rank", record.rank.unwrap_or(0))?;
+                item.set("num_submissions", record.num_submissions)?;
+                result.set(i + 1, item)?;
             }
+            Ok(result)
         })?;
         kaos.set("leaderboard_list", leaderboard_list)?;
 
         // kaos.leaderboard_around(id, user_id, count) -> array of records
+        // Note: get_around() not yet hooked, uses raw service
         let leaderboard_around =
             lua.create_function(|lua, (id, user_id, count): (String, String, usize)| {
                 let services = lua
@@ -399,6 +478,7 @@ impl LuaApi {
         kaos.set("leaderboard_around", leaderboard_around)?;
 
         // kaos.leaderboard_record(id, user_id) -> table or nil
+        // Note: get_record() not yet hooked, uses raw service
         let leaderboard_record =
             lua.create_function(|lua, (id, user_id): (String, String)| {
                 let services = lua
@@ -427,38 +507,44 @@ impl LuaApi {
     /// Register social_* functions (friends, groups, presence)
     fn register_social_api(&self, lua: &Lua, kaos: &Table) -> LuaResult<()> {
         // kaos.friends_add(user_id, friend_id, friend_username) -> table
+        // Uses hooked service if available (sends notifications)
         let friends_add = lua.create_function(
             |lua, (user_id, friend_id, friend_username): (String, String, String)| {
                 let services = lua
                     .app_data_ref::<ServicesHandle>()
                     .ok_or_else(|| mlua::Error::external("services not initialized"))?;
 
-                match services
-                    .0
-                    .social
-                    .add_friend(&user_id, &friend_id, &friend_username)
-                {
-                    Ok(friend) => {
-                        let result = lua.create_table()?;
-                        result.set("user_id", friend.user_id.as_str())?;
-                        result.set("username", friend.username.as_str())?;
-                        result.set(
-                            "state",
-                            match friend.state {
-                                crate::social::FriendState::Pending => "pending",
-                                crate::social::FriendState::Accepted => "accepted",
-                                crate::social::FriendState::Blocked => "blocked",
-                            },
-                        )?;
-                        Ok(result)
-                    }
-                    Err(e) => Err(mlua::Error::external(e)),
-                }
+                // Use hooked service if available (sends notifications)
+                let friend = if let Some(ref hooked) = services.0.hooked_social {
+                    let ctx = HookContext {
+                        user_id: Some(user_id.clone()),
+                        ..Default::default()
+                    };
+                    hooked.add_friend(&ctx, &user_id, &friend_id, &friend_username)
+                        .map_err(|e| mlua::Error::external(e))?
+                } else {
+                    services.0.social.add_friend(&user_id, &friend_id, &friend_username)
+                        .map_err(|e| mlua::Error::external(e))?
+                };
+
+                let result = lua.create_table()?;
+                result.set("user_id", friend.user_id.as_str())?;
+                result.set("username", friend.username.as_str())?;
+                result.set(
+                    "state",
+                    match friend.state {
+                        crate::social::FriendState::Pending => "pending",
+                        crate::social::FriendState::Accepted => "accepted",
+                        crate::social::FriendState::Blocked => "blocked",
+                    },
+                )?;
+                Ok(result)
             },
         )?;
         kaos.set("friends_add", friends_add)?;
 
         // kaos.friends_list(user_id) -> array of friends
+        // Note: get_friends() has no hooks
         let friends_list = lua.create_function(|lua, user_id: String| {
             let services = lua
                 .app_data_ref::<ServicesHandle>()
@@ -485,19 +571,29 @@ impl LuaApi {
         kaos.set("friends_list", friends_list)?;
 
         // kaos.friends_remove(user_id, friend_id) -> boolean
+        // Uses hooked service if available
         let friends_remove = lua.create_function(|lua, (user_id, friend_id): (String, String)| {
             let services = lua
                 .app_data_ref::<ServicesHandle>()
                 .ok_or_else(|| mlua::Error::external("services not initialized"))?;
 
-            match services.0.social.remove_friend(&user_id, &friend_id) {
-                Ok(()) => Ok(true),
-                Err(e) => Err(mlua::Error::external(e)),
+            if let Some(ref hooked) = services.0.hooked_social {
+                let ctx = HookContext {
+                    user_id: Some(user_id.clone()),
+                    ..Default::default()
+                };
+                hooked.remove_friend(&ctx, &user_id, &friend_id)
+                    .map_err(|e| mlua::Error::external(e))?;
+            } else {
+                services.0.social.remove_friend(&user_id, &friend_id)
+                    .map_err(|e| mlua::Error::external(e))?;
             }
+            Ok(true)
         })?;
         kaos.set("friends_remove", friends_remove)?;
 
         // kaos.group_create(creator_id, creator_username, name, description, open) -> table
+        // Uses hooked service if available
         let group_create = lua.create_function(
             |lua,
              (creator_id, creator_username, name, description, open): (
@@ -511,51 +607,72 @@ impl LuaApi {
                     .app_data_ref::<ServicesHandle>()
                     .ok_or_else(|| mlua::Error::external("services not initialized"))?;
 
-                match services.0.social.create_group(
-                    &creator_id,
-                    &creator_username,
-                    name,
-                    description,
-                    open,
-                ) {
-                    Ok(group) => {
-                        let result = lua.create_table()?;
-                        result.set("id", group.id.as_str())?;
-                        result.set("name", group.name.as_str())?;
-                        result.set("description", group.description.as_str())?;
-                        result.set("open", group.open)?;
-                        Ok(result)
-                    }
-                    Err(e) => Err(mlua::Error::external(e)),
-                }
+                let group = if let Some(ref hooked) = services.0.hooked_social {
+                    let ctx = HookContext {
+                        user_id: Some(creator_id.clone()),
+                        username: Some(creator_username.clone()),
+                        ..Default::default()
+                    };
+                    hooked.create_group(&ctx, &creator_id, &creator_username, name, description, open)
+                        .map_err(|e| mlua::Error::external(e))?
+                } else {
+                    services.0.social.create_group(&creator_id, &creator_username, name, description, open)
+                        .map_err(|e| mlua::Error::external(e))?
+                };
+
+                let result = lua.create_table()?;
+                result.set("id", group.id.as_str())?;
+                result.set("name", group.name.as_str())?;
+                result.set("description", group.description.as_str())?;
+                result.set("open", group.open)?;
+                Ok(result)
             },
         )?;
         kaos.set("group_create", group_create)?;
 
         // kaos.group_join(group_id, user_id, username) -> boolean
+        // Uses hooked service if available
         let group_join =
             lua.create_function(|lua, (group_id, user_id, username): (String, String, String)| {
                 let services = lua
                     .app_data_ref::<ServicesHandle>()
                     .ok_or_else(|| mlua::Error::external("services not initialized"))?;
 
-                match services.0.social.join_group(&group_id, &user_id, &username) {
-                    Ok(()) => Ok(true),
-                    Err(e) => Err(mlua::Error::external(e)),
+                if let Some(ref hooked) = services.0.hooked_social {
+                    let ctx = HookContext {
+                        user_id: Some(user_id.clone()),
+                        username: Some(username.clone()),
+                        ..Default::default()
+                    };
+                    hooked.join_group(&ctx, &group_id, &user_id, &username)
+                        .map_err(|e| mlua::Error::external(e))?;
+                } else {
+                    services.0.social.join_group(&group_id, &user_id, &username)
+                        .map_err(|e| mlua::Error::external(e))?;
                 }
+                Ok(true)
             })?;
         kaos.set("group_join", group_join)?;
 
         // kaos.group_leave(group_id, user_id) -> boolean
+        // Uses hooked service if available
         let group_leave = lua.create_function(|lua, (group_id, user_id): (String, String)| {
             let services = lua
                 .app_data_ref::<ServicesHandle>()
                 .ok_or_else(|| mlua::Error::external("services not initialized"))?;
 
-            match services.0.social.leave_group(&group_id, &user_id) {
-                Ok(()) => Ok(true),
-                Err(e) => Err(mlua::Error::external(e)),
+            if let Some(ref hooked) = services.0.hooked_social {
+                let ctx = HookContext {
+                    user_id: Some(user_id.clone()),
+                    ..Default::default()
+                };
+                hooked.leave_group(&ctx, &group_id, &user_id)
+                    .map_err(|e| mlua::Error::external(e))?;
+            } else {
+                services.0.social.leave_group(&group_id, &user_id)
+                    .map_err(|e| mlua::Error::external(e))?;
             }
+            Ok(true)
         })?;
         kaos.set("group_leave", group_leave)?;
 

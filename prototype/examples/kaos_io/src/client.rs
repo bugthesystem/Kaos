@@ -45,9 +45,10 @@ struct LeaderboardEntry {
     score: i32,
 }
 
+#[allow(dead_code)]
 struct GameState {
     my_id: String,
-    my_name: String,
+    my_name: String, // Reserved for multiplayer display
     players: Vec<Player>,
     food: Vec<Food>,
     leaderboard: Vec<LeaderboardEntry>,
@@ -107,6 +108,7 @@ impl GameState {
         self.players.iter().find(|p| p.id == self.my_id)
     }
 
+    #[allow(dead_code)] // Reserved for multiplayer client updates
     fn get_my_player_mut(&mut self) -> Option<&mut Player> {
         self.players.iter_mut().find(|p| p.id == self.my_id)
     }

@@ -275,7 +275,7 @@ pub async fn create_group(req: Request, ctx: Arc<ServerContext>) -> Response {
 
 /// DELETE /api/social/groups/:id
 /// Note: Group deletion is not implemented in the Social service
-pub async fn delete_group(req: Request, ctx: Arc<ServerContext>) -> Response {
+pub async fn delete_group(req: Request, _ctx: Arc<ServerContext>) -> Response {
     if let Some(identity) = req.ext::<Identity>() {
         if !identity.has_permission(Permission::ManageSocial) {
             return Response::forbidden().json(&serde_json::json!({

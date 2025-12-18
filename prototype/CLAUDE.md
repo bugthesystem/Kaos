@@ -4,16 +4,17 @@ A high-performance multiplayer game server framework in Rust.
 
 ## Current Status (Dec 2024)
 
-**85 tests passing. All P1/P2 tasks complete. Ready for Cluster Mode.**
+**139 tests passing. All P1/P2 tasks complete. Ready for Cluster Mode.**
 
-### Validated Complete (Dec 16, 2024)
+### Validated Complete (Dec 17, 2024)
 - ✅ **Phase 1**: Full Lua API (18 functions: storage, leaderboard, social, presence)
-- ✅ **Phase 2**: Hooked Services (HookedStorage, HookedLeaderboards, HookedSocial)
+- ✅ **Phase 2**: Hooked Services - **NOW WIRED** with metrics + notifications
 - ✅ **Phase 3**: Lua Match Handler (match_init/join/leave/loop/terminate)
-- ✅ **Phase 4**: PostgreSQL backend (`PostgresSyncBackend` implements `StorageBackend`)
-- ✅ **Phase 5**: Metrics integration (HookedStorage/Leaderboards record metrics)
+- ✅ **Phase 4**: PostgreSQL backend - **NOW TESTED** (6 integration tests)
+- ✅ **Phase 5**: Metrics integration - **NOW WIRED** in kaos-io server
 - ✅ **Phase 6**: Console Players API (queries real storage)
-- ✅ **Phase 7**: Notifications integration (friend requests send notifications)
+- ✅ **Phase 7**: Notifications integration - **NOW WIRED** to HookedSocial
+- ✅ **Phase 8**: Console `/metrics` endpoint added
 
 ### Next Up: CLUSTER MODE
 This is the big one. Research needed:

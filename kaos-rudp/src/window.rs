@@ -3,8 +3,10 @@
 //! This module provides a `BitmapWindow` for managing the receive window,
 //! handling out-of-order packet arrival efficiently using a bitmap-based approach.
 
-/// Max packet size (2KB > typical MTU 1500, with headroom for headers)
-const MAX_PACKET_SIZE: usize = 2048;
+/// Max packet size (64KB to support large game state payloads)
+/// Note: For memory efficiency with many slots, consider dynamic allocation
+/// if your use case typically has smaller packets.
+const MAX_PACKET_SIZE: usize = 65536;
 
 #[repr(C, align(128))]
 #[derive(Clone, Copy)]

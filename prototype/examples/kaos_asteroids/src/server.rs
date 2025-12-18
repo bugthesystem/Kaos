@@ -21,8 +21,10 @@ use kaosnet::{
     // Hooks
     HookRegistry, HookOperation, HookContext, BeforeHook, AfterHook, BeforeHookResult,
     hooks::Result as HookResult,
-    // Hooked Services
-    HookedStorage, HookedLeaderboards,
+    // Hooked Services (with metrics integration)
+    HookedStorage, HookedLeaderboards, HookedSocial,
+    // Metrics
+    Metrics,
     // Lua runtime and match handler
     LuaConfig, LuaRuntime, LuaMatchHandler, LuaServices,
     // Match system
@@ -57,9 +59,10 @@ enum ServerMessage {
 }
 
 // Client connection tracking (game state is managed by Lua)
+#[allow(dead_code)]
 struct Client {
     addr: SocketAddr,
-    session_id: u64,
+    session_id: u64, // Reserved for session management
     user_id: String,
     username: String,
 }
@@ -107,11 +110,45 @@ fn main() -> std::io::Result<()> {
     println!("    ║    Powered by KaosNet Services                     ║");
     println!("    ╚════════════════════════════════════════════════════╝\n");
 
+    // Initialize Prometheus metrics
+    let metrics = Arc::new(Metrics::new());
+    println!("✓ Metrics initialized");
+
     // Initialize all KaosNet services
     let sessions = Arc::new(SessionRegistry::new());
     let rooms = Arc::new(RoomRegistry::new());
-    let storage = Arc::new(Storage::new());
     let leaderboards = Arc::new(Leaderboards::new());
+
+    // Storage: Use PostgreSQL if DATABASE_URL is set, otherwise in-memory
+    let storage = if let Ok(db_url) = std::env::var("DATABASE_URL") {
+        println!("Connecting to PostgreSQL: {}...", db_url.split('@').last().unwrap_or("***"));
+        #[cfg(feature = "postgres")]
+        {
+            use kaosnet::storage::PostgresSyncBackend;
+            match PostgresSyncBackend::connect(&db_url) {
+                Ok(backend) => {
+                    if let Err(e) = backend.migrate() {
+                        eprintln!("Warning: Migration failed: {}", e);
+                    }
+                    println!("✓ PostgreSQL storage connected");
+                    Arc::new(Storage::with_backend(Arc::new(backend)))
+                }
+                Err(e) => {
+                    eprintln!("Warning: PostgreSQL connection failed: {}, using in-memory", e);
+                    Arc::new(Storage::new())
+                }
+            }
+        }
+        #[cfg(not(feature = "postgres"))]
+        {
+            eprintln!("Warning: DATABASE_URL set but postgres feature not enabled, using in-memory");
+            Arc::new(Storage::new())
+        }
+    } else {
+        println!("✓ In-memory storage (set DATABASE_URL for PostgreSQL)");
+        Arc::new(Storage::new())
+    };
+
     let chat = Arc::new(Chat::new());
     let matchmaker = Arc::new(Matchmaker::new());
     let notifications = Arc::new(Notifications::new());
@@ -135,10 +172,21 @@ fn main() -> std::io::Result<()> {
     hooks.register_after(HookOperation::MatchLeave, MatchLeaveLogHook);
     println!("✓ Hooks registered (storage validation, match join/leave logging)");
 
-    // Create hooked service wrappers for storage and leaderboards
-    let _hooked_storage = Arc::new(HookedStorage::new(Arc::clone(&storage), Arc::clone(&hooks)));
-    let _hooked_leaderboards = Arc::new(HookedLeaderboards::new(Arc::clone(&leaderboards), Arc::clone(&hooks)));
-    println!("✓ Hooked services initialized");
+    // Create Hooked Services with metrics integration
+    let hooked_storage = Arc::new(
+        HookedStorage::new(Arc::clone(&storage), Arc::clone(&hooks))
+            .with_metrics(Arc::clone(&metrics))
+    );
+    let hooked_leaderboards = Arc::new(
+        HookedLeaderboards::new(Arc::clone(&leaderboards), Arc::clone(&hooks))
+            .with_metrics(Arc::clone(&metrics))
+    );
+    let hooked_social = Arc::new(
+        HookedSocial::new(Arc::clone(&social), Arc::clone(&hooks))
+            .with_notifications(Arc::clone(&notifications))
+            .with_metrics(Arc::clone(&metrics))
+    );
+    println!("✓ Hooked services initialized (storage, leaderboards, social with metrics)");
 
     // Create high scores leaderboard
     leaderboards.create(LeaderboardConfig {
@@ -154,11 +202,12 @@ fn main() -> std::io::Result<()> {
     println!("✓ Storage service initialized");
 
     // ==================== Lua Runtime Setup ====================
-    // Create LuaServices for Lua script access to storage/leaderboards
-    let lua_services = Arc::new(LuaServices::new(
-        Arc::clone(&storage),
-        Arc::clone(&leaderboards),
-        Arc::clone(&social),
+    // Create LuaServices with HOOKED services for Lua script access
+    // This ensures Lua scripts get metrics, hooks, and notifications!
+    let lua_services = Arc::new(LuaServices::with_hooked_services(
+        Arc::clone(&hooked_storage),
+        Arc::clone(&hooked_leaderboards),
+        Arc::clone(&hooked_social),
     ));
 
     // Create Lua runtime with services
@@ -195,7 +244,7 @@ fn main() -> std::io::Result<()> {
     });
     println!("✓ Game room created: {}", game_room_id);
 
-    // Start Console API server in background thread with all services
+    // Start Console API server in background thread with all services + metrics
     let console_sessions = Arc::clone(&sessions);
     let console_rooms = Arc::clone(&rooms);
     let console_storage = Arc::clone(&storage);
@@ -205,6 +254,7 @@ fn main() -> std::io::Result<()> {
     let console_chat = Arc::clone(&chat);
     let console_matchmaker = Arc::clone(&matchmaker);
     let console_notifications = Arc::clone(&notifications);
+    let console_metrics = Arc::clone(&metrics);
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
@@ -212,7 +262,7 @@ fn main() -> std::io::Result<()> {
             let mut config = ConsoleConfig::default();
             config.bind_addr = "127.0.0.1:7353".to_string(); // Different port from kaos-io
 
-            // Use builder to wire all services to console
+            // Use builder to wire all services to console (including metrics)
             let console = ConsoleServer::builder(config, console_sessions, console_rooms)
                 .storage(console_storage)
                 .leaderboards(console_leaderboards)
@@ -221,6 +271,7 @@ fn main() -> std::io::Result<()> {
                 .chat(console_chat)
                 .matchmaker(console_matchmaker)
                 .notifications(console_notifications)
+                .metrics(console_metrics)
                 .build();
 
             if let Err(e) = console.serve().await {
@@ -228,7 +279,7 @@ fn main() -> std::io::Result<()> {
             }
         });
     });
-    println!("✓ Console API listening on http://0.0.0.0:7353 (all services wired)");
+    println!("✓ Console API listening on http://0.0.0.0:7353 (all services + metrics wired)");
 
     // Start RUDP server using kaos_rudp directly (with MessageRingBuffer per client)
     let mut server = RudpServer::bind("0.0.0.0:7352", 256)?;
