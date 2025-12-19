@@ -2,7 +2,7 @@
 
 use crate::console::auth::{Identity, Permission};
 use crate::console::server::ServerContext;
-use crate::console::types::{PaginatedList, RoomInfo};
+use crate::console::types::{PaginatedList, RoomInfo, RoomPlayerInfo};
 use crate::room::RoomState;
 use kaos_http::{Request, Response};
 use std::sync::Arc;
@@ -45,6 +45,7 @@ pub async fn list_rooms(req: Request, ctx: Arc<ServerContext>) -> Response {
         .map(|r| RoomInfo {
             id: r.id.clone(),
             label: if r.config.label.is_empty() { None } else { Some(r.config.label.clone()) },
+            module: if r.config.module.is_empty() { None } else { Some(r.config.module.clone()) },
             state: room_state_str(r.state).to_string(),
             tick_rate: r.config.tick_rate,
             player_count: r.player_count() as u32,
@@ -83,6 +84,7 @@ pub async fn get_room(req: Request, ctx: Arc<ServerContext>) -> Response {
             Response::ok().json(&RoomInfo {
                 id: room.id.clone(),
                 label: if room.config.label.is_empty() { None } else { Some(room.config.label.clone()) },
+                module: if room.config.module.is_empty() { None } else { Some(room.config.module.clone()) },
                 state: room_state_str(room.state).to_string(),
                 tick_rate: room.config.tick_rate,
                 player_count: room.player_count() as u32,
@@ -135,9 +137,22 @@ pub async fn get_room_players(req: Request, ctx: Arc<ServerContext>) -> Response
 
     match ctx.rooms.get(id) {
         Some(room) => {
+            // Get detailed player info by looking up each session
+            let players: Vec<RoomPlayerInfo> = room.player_ids()
+                .iter()
+                .filter_map(|session_id| {
+                    ctx.sessions.get(*session_id).map(|session| RoomPlayerInfo {
+                        session_id: session.id,
+                        user_id: session.user_id.clone(),
+                        username: session.username.clone(),
+                        address: session.addr.to_string(),
+                    })
+                })
+                .collect();
+
             Response::ok().json(&serde_json::json!({
                 "room_id": room.id,
-                "players": room.player_ids(),
+                "players": players,
                 "player_count": room.player_count()
             }))
         }

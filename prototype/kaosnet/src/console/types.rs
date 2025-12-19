@@ -304,6 +304,7 @@ pub struct SessionInfo {
     pub state: String,
     pub user_id: Option<String>,
     pub username: Option<String>,
+    pub room_id: Option<String>,
     pub connected_at: i64,
     pub last_heartbeat: i64,
 }
@@ -313,11 +314,21 @@ pub struct SessionInfo {
 pub struct RoomInfo {
     pub id: String,
     pub label: Option<String>,
+    pub module: Option<String>,
     pub state: String,
     pub tick_rate: u32,
     pub player_count: u32,
     pub max_players: u32,
     pub created_at: i64,
+}
+
+/// Player info for room details.
+#[derive(Debug, Serialize)]
+pub struct RoomPlayerInfo {
+    pub session_id: u64,
+    pub user_id: Option<String>,
+    pub username: Option<String>,
+    pub address: String,
 }
 
 /// Paginated list response.

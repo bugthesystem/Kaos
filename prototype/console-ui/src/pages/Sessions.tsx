@@ -108,6 +108,20 @@ export function SessionsPage() {
       ),
     },
     {
+      key: 'room_id',
+      header: 'Room',
+      width: '150px',
+      render: (session) => (
+        session.room_id ? (
+          <span className="font-mono text-xs" style={{ color: 'var(--color-info)' }}>
+            {session.room_id.substring(0, 8)}...
+          </span>
+        ) : (
+          <span style={{ color: 'var(--text-muted)' }}>—</span>
+        )
+      ),
+    },
+    {
       key: 'connected_at',
       header: 'Duration',
       width: '100px',
@@ -283,6 +297,12 @@ export function SessionsPage() {
               </Field>
               <Field label="Username">
                 {selectedSession.username || '-'}
+              </Field>
+            </Section>
+
+            <Section title="Game">
+              <Field label="Room ID" mono>
+                {selectedSession.room_id || 'Not in a room'}
               </Field>
             </Section>
           </div>

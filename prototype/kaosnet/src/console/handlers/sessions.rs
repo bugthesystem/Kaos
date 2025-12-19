@@ -51,6 +51,7 @@ pub async fn list_sessions(req: Request, ctx: Arc<ServerContext>) -> Response {
             state: session_state_str(s.state).to_string(),
             user_id: s.user_id.clone(),
             username: s.username.clone(),
+            room_id: s.room_id.clone(),
             connected_at: instant_to_epoch(s.created_at, reference),
             last_heartbeat: instant_to_epoch(s.last_heartbeat, reference),
         })
@@ -89,6 +90,7 @@ pub async fn get_session(req: Request, ctx: Arc<ServerContext>) -> Response {
                 state: session_state_str(session.state).to_string(),
                 user_id: session.user_id.clone(),
                 username: session.username.clone(),
+                room_id: session.room_id.clone(),
                 connected_at: instant_to_epoch(session.created_at, reference),
                 last_heartbeat: instant_to_epoch(session.last_heartbeat, reference),
             })

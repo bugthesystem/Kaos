@@ -8,9 +8,8 @@ interface StorageObject {
   key: string;
   user_id: string;
   value: Record<string, unknown>;
-  version: string;
-  permission_read: number;
-  permission_write: number;
+  version: number;
+  permission: string; // "owner_only", "public_read", or "public_read_write"
   created_at: number;
   updated_at: number;
 }
@@ -93,9 +92,20 @@ export default function Storage() {
         return;
       }
 
-      await api.post('/api/storage/objects', {
-        ...newObject,
+      // Convert permission numbers to backend permission string
+      let permission = 'public_read';
+      if (newObject.permission_write === 2) {
+        permission = 'public_read_write';
+      } else if (newObject.permission_read === 1) {
+        permission = 'owner_only';
+      }
+
+      await api.post('/api/storage', {
+        user_id: newObject.user_id,
+        collection: newObject.collection,
+        key: newObject.key,
         value,
+        permission,
       });
       setShowCreate(false);
       setNewObject({
@@ -119,7 +129,7 @@ export default function Storage() {
     if (!selectedObject) return;
     if (!confirm('Delete this storage object?')) return;
     try {
-      await api.delete(`/api/storage/objects/${selectedObject.collection}/${selectedObject.key}?user_id=${selectedObject.user_id}`);
+      await api.delete(`/api/storage/${selectedObject.user_id}/${selectedObject.collection}/${selectedObject.key}`);
       setDrawerOpen(false);
       setSelectedObject(null);
       loadObjects();
@@ -133,20 +143,20 @@ export default function Storage() {
     setDrawerOpen(true);
   };
 
-  const getPermissionLabel = (perm: number) => {
+  const getPermissionLabel = (perm: string) => {
     switch (perm) {
-      case 0: return 'No Access';
-      case 1: return 'Owner Only';
-      case 2: return 'Public';
-      default: return `Unknown (${perm})`;
+      case 'owner_only': return 'Owner Only';
+      case 'public_read': return 'Public Read';
+      case 'public_read_write': return 'Public R/W';
+      default: return perm;
     }
   };
 
-  const getPermissionVariant = (perm: number): 'danger' | 'warning' | 'success' => {
+  const getPermissionVariant = (perm: string): 'danger' | 'warning' | 'success' => {
     switch (perm) {
-      case 0: return 'danger';
-      case 1: return 'warning';
-      case 2: return 'success';
+      case 'owner_only': return 'warning';
+      case 'public_read': return 'info' as any;
+      case 'public_read_write': return 'success';
       default: return 'warning';
     }
   };
@@ -178,22 +188,12 @@ export default function Storage() {
       ),
     },
     {
-      key: 'permission_read',
-      header: 'Read',
-      width: '100px',
+      key: 'permission',
+      header: 'Permission',
+      width: '120px',
       render: (obj) => (
-        <Badge variant={getPermissionVariant(obj.permission_read)}>
-          {getPermissionLabel(obj.permission_read)}
-        </Badge>
-      ),
-    },
-    {
-      key: 'permission_write',
-      header: 'Write',
-      width: '100px',
-      render: (obj) => (
-        <Badge variant={getPermissionVariant(obj.permission_write)}>
-          {getPermissionLabel(obj.permission_write)}
+        <Badge variant={getPermissionVariant(obj.permission)}>
+          {getPermissionLabel(obj.permission)}
         </Badge>
       ),
     },
@@ -474,11 +474,8 @@ export default function Storage() {
                   {selectedObject.key}
                 </h2>
                 <div className="flex items-center gap-2 mt-1">
-                  <Badge variant={getPermissionVariant(selectedObject.permission_read)}>
-                    Read: {getPermissionLabel(selectedObject.permission_read)}
-                  </Badge>
-                  <Badge variant={getPermissionVariant(selectedObject.permission_write)}>
-                    Write: {getPermissionLabel(selectedObject.permission_write)}
+                  <Badge variant={getPermissionVariant(selectedObject.permission)}>
+                    {getPermissionLabel(selectedObject.permission)}
                   </Badge>
                 </div>
               </div>
@@ -496,6 +493,9 @@ export default function Storage() {
               </Field>
               <Field label="Version" mono>
                 {selectedObject.version}
+              </Field>
+              <Field label="Permission">
+                {getPermissionLabel(selectedObject.permission)}
               </Field>
               <Field label="Created At">
                 {formatTimestamp(selectedObject.created_at)}

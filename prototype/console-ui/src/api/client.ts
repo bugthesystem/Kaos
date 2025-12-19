@@ -2,6 +2,7 @@ import type {
   ServerStatus,
   SessionInfo,
   RoomInfo,
+  RoomPlayerInfo,
   AccountInfo,
   ApiKeyInfo,
   LuaScriptInfo,
@@ -115,7 +116,7 @@ class ApiClient {
     return this.request('GET', `/api/rooms/${id}/state`);
   }
 
-  async getRoomPlayers(id: string): Promise<{ room_id: string; players: number[]; player_count: number }> {
+  async getRoomPlayers(id: string): Promise<{ room_id: string; players: RoomPlayerInfo[]; player_count: number }> {
     return this.request('GET', `/api/rooms/${id}/players`);
   }
 

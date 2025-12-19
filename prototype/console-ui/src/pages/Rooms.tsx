@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { DataTable, Badge, type Column } from '../components/DataTable';
 import { Drawer, Field, Section } from '../components/Drawer';
-import type { RoomInfo } from '../api/types';
+import type { RoomInfo, RoomPlayerInfo } from '../api/types';
 
 function formatTimestamp(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleString();
@@ -14,7 +14,7 @@ export function RoomsPage() {
   const [error, setError] = useState('');
   const [selectedRoom, setSelectedRoom] = useState<RoomInfo | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [players, setPlayers] = useState<number[]>([]);
+  const [players, setPlayers] = useState<RoomPlayerInfo[]>([]);
 
   useEffect(() => {
     loadRooms();
@@ -117,6 +117,20 @@ export function RoomsPage() {
         <span style={{ color: 'var(--text-secondary)' }}>
           {room.player_count} / {room.max_players}
         </span>
+      ),
+    },
+    {
+      key: 'module',
+      header: 'Module',
+      width: '120px',
+      render: (room) => (
+        room.module ? (
+          <span className="font-mono text-xs" style={{ color: 'var(--color-accent)' }}>
+            {room.module}
+          </span>
+        ) : (
+          <span style={{ color: 'var(--text-muted)' }}>—</span>
+        )
       ),
     },
     {
@@ -277,6 +291,9 @@ export function RoomsPage() {
               <Field label="Label">
                 {selectedRoom.label || '-'}
               </Field>
+              <Field label="Module" mono>
+                {selectedRoom.module || '-'}
+              </Field>
               <Field label="State">
                 {selectedRoom.state}
               </Field>
@@ -290,15 +307,30 @@ export function RoomsPage() {
 
             {players.length > 0 && (
               <Section title="Connected Players">
-                <div className="flex flex-wrap gap-2">
-                  {players.map((id) => (
-                    <span
-                      key={id}
-                      className="px-3 py-1.5 rounded-lg font-mono text-sm"
-                      style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
+                <div className="space-y-2">
+                  {players.map((player) => (
+                    <div
+                      key={player.session_id}
+                      className="p-3 rounded-lg"
+                      style={{ background: 'var(--bg-tertiary)' }}
                     >
-                      Session #{id}
-                    </span>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                            {player.username || player.user_id || `Session #${player.session_id}`}
+                          </div>
+                          <div className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+                            {player.address}
+                          </div>
+                        </div>
+                        <span
+                          className="px-2 py-1 rounded text-xs font-mono"
+                          style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}
+                        >
+                          #{player.session_id}
+                        </span>
+                      </div>
+                    </div>
                   ))}
                 </div>
               </Section>

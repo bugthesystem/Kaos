@@ -283,12 +283,13 @@ impl ConsoleServer {
         HttpServer::bind(&self.config.bind_addr)
             .router(router)
             .middleware(LoggingMiddleware)
-            .middleware(CorsMiddleware::permissive())
-            .middleware(RateLimitMiddleware::new())  // Rate limiting before auth
+            .middleware(RateLimitMiddleware::new())
             .middleware(AuthMiddleware::new(
                 Arc::clone(&self.ctx.auth),
                 self.config.allow_public_status,
             ))
+            // CORS must be last so it wraps all responses including auth failures
+            .middleware(CorsMiddleware::permissive())
             .serve()
             .await
     }

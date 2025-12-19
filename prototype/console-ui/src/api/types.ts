@@ -25,6 +25,7 @@ export interface SessionInfo {
   state: string;
   user_id: string | null;
   username: string | null;
+  room_id: string | null;
   connected_at: number;
   last_heartbeat: number;
 }
@@ -32,11 +33,19 @@ export interface SessionInfo {
 export interface RoomInfo {
   id: string;
   label: string | null;
+  module: string | null;
   state: string;
   tick_rate: number;
   player_count: number;
   max_players: number;
   created_at: number;
+}
+
+export interface RoomPlayerInfo {
+  session_id: number;
+  user_id: string | null;
+  username: string | null;
+  address: string;
 }
 
 export interface AccountInfo {

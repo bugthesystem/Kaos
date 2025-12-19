@@ -377,9 +377,11 @@ impl PostgresBackend {
 
 /// Sync wrapper for PostgresBackend that implements StorageBackend.
 ///
-/// Uses a tokio runtime internally to bridge async to sync.
+/// Uses `tokio::task::block_in_place` to safely run async operations from sync context,
+/// even when called from within an async runtime.
 pub struct PostgresSyncBackend {
     inner: Arc<PostgresBackend>,
+    /// Handle to the runtime (for operations outside async context)
     runtime: Arc<Runtime>,
 }
 
@@ -406,11 +408,27 @@ impl PostgresSyncBackend {
         self.runtime.block_on(self.inner.migrate())?;
         Ok(())
     }
+
+    /// Helper to run async code from sync context, handling both
+    /// cases where we're inside or outside an async runtime.
+    fn block_on_async<F, T>(&self, f: F) -> T
+    where
+        F: std::future::Future<Output = T>,
+    {
+        // Check if we're inside a tokio runtime
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            // We're inside a runtime - use block_in_place to avoid nested runtime panic
+            tokio::task::block_in_place(|| handle.block_on(f))
+        } else {
+            // We're outside a runtime - use our own runtime
+            self.runtime.block_on(f)
+        }
+    }
 }
 
 impl StorageBackend for PostgresSyncBackend {
     fn get(&self, user_id: &str, collection: &str, key: &str) -> Result<Option<StorageObject>> {
-        self.runtime.block_on(self.inner.get_async(user_id, collection, key))
+        self.block_on_async(self.inner.get_async(user_id, collection, key))
     }
 
     fn set(
@@ -421,11 +439,11 @@ impl StorageBackend for PostgresSyncBackend {
         value: Value,
         expected_version: Option<u64>,
     ) -> Result<StorageObject> {
-        self.runtime.block_on(self.inner.set_async(user_id, collection, key, value, expected_version))
+        self.block_on_async(self.inner.set_async(user_id, collection, key, value, expected_version))
     }
 
     fn delete(&self, user_id: &str, collection: &str, key: &str) -> Result<bool> {
-        self.runtime.block_on(self.inner.delete_async(user_id, collection, key))
+        self.block_on_async(self.inner.delete_async(user_id, collection, key))
     }
 
     fn list(
@@ -435,35 +453,35 @@ impl StorageBackend for PostgresSyncBackend {
         limit: usize,
         cursor: Option<&str>,
     ) -> Result<(Vec<StorageObject>, Option<String>)> {
-        self.runtime.block_on(self.inner.list_async(user_id, collection, limit, cursor))
+        self.block_on_async(self.inner.list_async(user_id, collection, limit, cursor))
     }
 
     fn get_many(&self, reads: &[ObjectId]) -> Result<Vec<Option<StorageObject>>> {
-        self.runtime.block_on(self.inner.get_many_async(reads))
+        self.block_on_async(self.inner.get_many_async(reads))
     }
 
     fn write_many(&self, writes: &[WriteOp]) -> Result<Vec<StorageObject>> {
-        self.runtime.block_on(self.inner.write_many_async(writes))
+        self.block_on_async(self.inner.write_many_async(writes))
     }
 
     fn delete_many(&self, deletes: &[ObjectId]) -> Result<usize> {
-        self.runtime.block_on(self.inner.delete_many_async(deletes))
+        self.block_on_async(self.inner.delete_many_async(deletes))
     }
 
     fn query(&self, collection: &str, query: Query, limit: usize) -> Result<Vec<StorageObject>> {
-        self.runtime.block_on(self.inner.query_async(collection, query, limit))
+        self.block_on_async(self.inner.query_async(collection, query, limit))
     }
 
     fn count(&self, collection: &str, query: Query) -> Result<u64> {
-        self.runtime.block_on(self.inner.count_async(collection, query))
+        self.block_on_async(self.inner.count_async(collection, query))
     }
 
     fn list_collections(&self) -> Vec<String> {
-        self.runtime.block_on(self.inner.list_collections_async())
+        self.block_on_async(self.inner.list_collections_async())
     }
 
     fn list_all_in_collection(&self, collection: &str) -> Vec<StorageObject> {
-        self.runtime.block_on(self.inner.list_all_in_collection_async(collection))
+        self.block_on_async(self.inner.list_all_in_collection_async(collection))
     }
 }
 
