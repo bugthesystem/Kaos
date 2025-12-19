@@ -66,3 +66,43 @@ pub async fn me(req: Request) -> Response {
         })),
     }
 }
+
+/// POST /api/auth/refresh
+/// Refresh the JWT token if the current one is still valid.
+/// Returns a new token with extended expiry.
+pub async fn refresh(req: Request, auth: Arc<AuthService>) -> Response {
+    match req.ext::<Identity>() {
+        Some(Identity::User { id, username, role }) => {
+            // Generate a fresh token for this user
+            if let Some(token) = auth.jwt().generate(&id.to_string(), *role) {
+                let expires_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64 + auth.jwt().expiry_secs() as i64)
+                    .unwrap_or(0);
+
+                Response::ok().json(&serde_json::json!({
+                    "token": token,
+                    "expires_at": expires_at,
+                    "user": {
+                        "id": id.to_string(),
+                        "username": username,
+                        "role": role.as_str()
+                    }
+                }))
+            } else {
+                Response::internal_error().json(&serde_json::json!({
+                    "error": "failed to generate token"
+                }))
+            }
+        }
+        Some(Identity::ApiKey { .. }) => {
+            // API keys can't be refreshed - they have their own expiry
+            Response::bad_request().json(&serde_json::json!({
+                "error": "API keys cannot be refreshed"
+            }))
+        }
+        None => Response::unauthorized().json(&serde_json::json!({
+            "error": "not authenticated"
+        })),
+    }
+}

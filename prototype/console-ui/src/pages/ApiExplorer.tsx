@@ -93,6 +93,43 @@ const API_ENDPOINTS: ApiEndpoint[] = [
   { id: 'matchmaker-remove', method: 'DELETE', path: '/api/matchmaker/remove', description: 'Remove from matchmaker queue', category: 'Matchmaker' },
   { id: 'matchmaker-ticket-cancel', method: 'DELETE', path: '/api/matchmaker/tickets/:id', description: 'Cancel ticket (admin)', category: 'Matchmaker',
     params: [{ name: 'id', type: 'string', required: true, description: 'Ticket ID' }] },
+
+  // Chat
+  { id: 'chat-channels', method: 'GET', path: '/api/chat/channels', description: 'List chat channels', category: 'Chat',
+    params: [{ name: 'page', type: 'number' }, { name: 'page_size', type: 'number' }, { name: 'user_id', type: 'string' }, { name: 'channel_type', type: 'string' }] },
+  { id: 'chat-channel-get', method: 'GET', path: '/api/chat/channels/:id', description: 'Get channel details', category: 'Chat',
+    params: [{ name: 'id', type: 'string', required: true }] },
+  { id: 'chat-channel-messages', method: 'GET', path: '/api/chat/channels/:id/messages', description: 'Get channel messages', category: 'Chat',
+    params: [{ name: 'id', type: 'string', required: true }, { name: 'limit', type: 'number' }, { name: 'before', type: 'string' }] },
+  { id: 'chat-channel-delete', method: 'DELETE', path: '/api/chat/channels/:id', description: 'Delete channel', category: 'Chat',
+    params: [{ name: 'id', type: 'string', required: true }] },
+  { id: 'chat-channel-send', method: 'POST', path: '/api/chat/channels/:id/send', description: 'Send system message to channel', category: 'Chat',
+    params: [{ name: 'id', type: 'string', required: true }],
+    body: { example: '{\n  "content": "System announcement",\n  "code": 100\n}' } },
+
+  // Social - Groups
+  { id: 'groups-list', method: 'GET', path: '/api/groups', description: 'List groups', category: 'Social',
+    params: [{ name: 'page', type: 'number' }, { name: 'page_size', type: 'number' }, { name: 'search', type: 'string' }, { name: 'user_id', type: 'string' }] },
+  { id: 'group-get', method: 'GET', path: '/api/groups/:id', description: 'Get group details', category: 'Social',
+    params: [{ name: 'id', type: 'string', required: true }] },
+  { id: 'group-members', method: 'GET', path: '/api/groups/:id/members', description: 'Get group members', category: 'Social',
+    params: [{ name: 'id', type: 'string', required: true }] },
+  { id: 'group-delete', method: 'DELETE', path: '/api/groups/:id', description: 'Delete group', category: 'Social',
+    params: [{ name: 'id', type: 'string', required: true }] },
+
+  // Social - Friends
+  { id: 'friends-list', method: 'GET', path: '/api/friends', description: 'List friends for a user', category: 'Social',
+    params: [{ name: 'user_id', type: 'string', required: true }, { name: 'state', type: 'number', description: '0=friends, 1=pending sent, 2=pending received, 3=blocked' }] },
+
+  // Tournaments
+  { id: 'tournaments-list', method: 'GET', path: '/api/tournaments', description: 'List tournaments', category: 'Tournaments',
+    params: [{ name: 'page', type: 'number' }, { name: 'page_size', type: 'number' }] },
+  { id: 'tournament-get', method: 'GET', path: '/api/tournaments/:id', description: 'Get tournament details', category: 'Tournaments',
+    params: [{ name: 'id', type: 'string', required: true }] },
+  { id: 'tournament-records', method: 'GET', path: '/api/tournaments/:id/records', description: 'Get tournament records', category: 'Tournaments',
+    params: [{ name: 'id', type: 'string', required: true }, { name: 'limit', type: 'number' }] },
+  { id: 'tournament-cancel', method: 'POST', path: '/api/tournaments/:id/cancel', description: 'Cancel tournament', category: 'Tournaments',
+    params: [{ name: 'id', type: 'string', required: true }] },
 ];
 
 interface RequestHistory {

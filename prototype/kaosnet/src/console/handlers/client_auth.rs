@@ -7,7 +7,7 @@ use crate::auth::{
     AuthResponse, AuthError,
 };
 use crate::console::server::ServerContext;
-use kaos_http::{Request, Response};
+use kaos_http::{Request, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -91,21 +91,21 @@ impl From<AuthResponse> for SessionResponse {
 
 fn auth_error_response(err: AuthError) -> Response {
     let (status, code) = match &err {
-        AuthError::AccountNotFound => (404, "ACCOUNT_NOT_FOUND"),
-        AuthError::InvalidCredentials => (401, "INVALID_CREDENTIALS"),
-        AuthError::AccountExists => (409, "ACCOUNT_EXISTS"),
-        AuthError::DeviceAlreadyLinked => (409, "DEVICE_ALREADY_LINKED"),
-        AuthError::EmailAlreadyRegistered => (409, "EMAIL_ALREADY_REGISTERED"),
-        AuthError::InvalidToken => (401, "INVALID_TOKEN"),
-        AuthError::TokenExpired => (401, "TOKEN_EXPIRED"),
-        AuthError::AccountDisabled => (403, "ACCOUNT_DISABLED"),
-        AuthError::WeakPassword(_) => (400, "WEAK_PASSWORD"),
-        AuthError::InvalidEmail => (400, "INVALID_EMAIL"),
-        AuthError::CustomAuthFailed(_) => (401, "CUSTOM_AUTH_FAILED"),
-        AuthError::Internal(_) => (500, "INTERNAL_ERROR"),
+        AuthError::AccountNotFound => (StatusCode::NOT_FOUND, "ACCOUNT_NOT_FOUND"),
+        AuthError::InvalidCredentials => (StatusCode::UNAUTHORIZED, "INVALID_CREDENTIALS"),
+        AuthError::AccountExists => (StatusCode::CONFLICT, "ACCOUNT_EXISTS"),
+        AuthError::DeviceAlreadyLinked => (StatusCode::CONFLICT, "DEVICE_ALREADY_LINKED"),
+        AuthError::EmailAlreadyRegistered => (StatusCode::CONFLICT, "EMAIL_ALREADY_REGISTERED"),
+        AuthError::InvalidToken => (StatusCode::UNAUTHORIZED, "INVALID_TOKEN"),
+        AuthError::TokenExpired => (StatusCode::UNAUTHORIZED, "TOKEN_EXPIRED"),
+        AuthError::AccountDisabled => (StatusCode::FORBIDDEN, "ACCOUNT_DISABLED"),
+        AuthError::WeakPassword(_) => (StatusCode::BAD_REQUEST, "WEAK_PASSWORD"),
+        AuthError::InvalidEmail => (StatusCode::BAD_REQUEST, "INVALID_EMAIL"),
+        AuthError::CustomAuthFailed(_) => (StatusCode::UNAUTHORIZED, "CUSTOM_AUTH_FAILED"),
+        AuthError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
     };
 
-    Response::with_status(status).json(&serde_json::json!({
+    Response::new(status).json(&serde_json::json!({
         "error": err.to_string(),
         "code": code,
     }))

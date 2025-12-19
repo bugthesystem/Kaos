@@ -8,6 +8,9 @@ repository = "https://github.com/kaosnet/kaosnet-rs"
 keywords = ["kaosnet", "game-server", "multiplayer", "websocket", "realtime"]
 categories = ["game-development", "network-programming"]
 
+# Keep this crate independent from parent workspace (it's a client SDK)
+[workspace]
+
 [dependencies]
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
@@ -42,3 +45,7 @@ blocking = []
 [[example]]
 name = "basic"
 path = "examples/basic.rs"
+
+[[example]]
+name = "asteroids_client"
+path = "examples/asteroids_client.rs"

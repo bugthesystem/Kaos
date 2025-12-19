@@ -6,6 +6,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Build args for API URL (can be overridden at build time)
+ARG VITE_API_URL=http://localhost:7350
+ENV VITE_API_URL=$VITE_API_URL
+
 # Copy package files
 COPY package*.json ./
 
@@ -15,7 +19,7 @@ RUN npm ci
 # Copy source
 COPY . .
 
-# Build
+# Build with environment variable
 RUN npm run build
 
 # Runtime stage - nginx for static hosting

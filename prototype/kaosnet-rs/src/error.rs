@@ -69,4 +69,9 @@ impl Error {
             code: Some(code),
         }
     }
+
+    /// Alias for server_with_code.
+    pub fn server_code(message: impl Into<String>, code: i32) -> Self {
+        Self::server_with_code(message, code)
+    }
 }

@@ -93,12 +93,13 @@ socket.onmatchmakermatched = (matched) => {
 
 | Platform | Nakama | KaosNet | Gap |
 |----------|--------|---------|-----|
-| JavaScript/TypeScript | Official SDK | Raw WebSocket | CRITICAL |
-| Unity (C#) | Official SDK | None | CRITICAL |
-| Godot (GDScript) | Official SDK + High-level Multiplayer API | None | CRITICAL |
-| Unreal (C++) | Official SDK | None | HIGH |
-| Flutter/Dart | Official SDK | None | MEDIUM |
-| Swift/iOS | Official SDK | None | MEDIUM |
+| JavaScript/TypeScript | Official SDK | ✅ `kaosnet-js` | DONE |
+| Rust | Community SDK | ✅ `kaosnet-rs` (WS + RUDP) | DONE |
+| Unity (C#) | Official SDK | Via Rust FFI | MEDIUM |
+| Godot (GDScript) | Official SDK + High-level Multiplayer API | Via Rust FFI | MEDIUM |
+| Unreal (C++) | Official SDK | Via Rust FFI | MEDIUM |
+| Flutter/Dart | Official SDK | None | LOW |
+| Swift/iOS | Official SDK | None | LOW |
 
 ---
 
@@ -351,22 +352,30 @@ After implementing this plan:
 | Phase | Item | Status | Location |
 |-------|------|--------|----------|
 | 1.1 | kaosnet-js SDK | ✅ Done | `/prototype/kaosnet-js/` |
+| 1.1 | kaosnet-rs SDK (Rust) | ✅ Done | `/prototype/kaosnet-rs/` |
 | 1.1 | TypeScript types | ✅ Done | `/prototype/kaosnet-js/src/types.ts` |
 | 1.1 | Device/Email auth | ✅ Done | `POST /api/auth/device`, `/email`, `/custom`, `/refresh` |
 | 1.1 | Browser bundle (IIFE) | ✅ Done | `/prototype/kaosnet-js/dist/index.global.js` |
 | 1.1 | SDK example integration | ✅ Done | `/prototype/examples/kaos_io/web/index-sdk.html` |
 | 1.2 | Protocol documentation | ✅ Done | `/prototype/docs/PROTOCOL.md` (KaosTalk) |
 | 2.1 | Players page (real data) | ✅ Done | Uses `client_auth` accounts |
+| 2.1 | Chat page (real data) | ✅ Done | Uses `list_channels_with_counts` |
+| 2.1 | Social page (real data) | ✅ Done | Groups + Friends listing |
+| 2.1 | Tournaments page (real data) | ✅ Done | Tournament listing |
 | 2.2 | API Explorer | ✅ Done | `/prototype/console-ui/src/pages/ApiExplorer.tsx` |
 | 2.3 | Player Management UI | ✅ Done | Server-side pagination, disabled/banned fix |
+| 3.1 | Matchmaker properties | ✅ Done | `POST /api/matchmaker/add` with string/numeric props |
 
 ### In Progress 🔄
 
 | Phase | Item | Status |
 |-------|------|--------|
-| 3.1 | Matchmaker properties | ✅ Done |
+| 5.1 | Unity SDK (via Rust FFI) | Planned |
+| 5.2 | Godot SDK (via Rust FFI) | Planned |
 
 ### SDK Usage
+
+#### JavaScript/TypeScript
 
 ```typescript
 // Node.js / Bundler
@@ -388,14 +397,66 @@ await socket.connect(session);
 </script>
 ```
 
+#### Rust
+
+```rust
+use kaosnet_rs::{KaosClient, RudpClient, Result};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // HTTP Client + Auth
+    let client = KaosClient::new("localhost", 7350);
+    let session = client.authenticate_device("my-device-id").await?;
+
+    // WebSocket for real-time (chat, matchmaker, presence)
+    let socket = client.create_socket();
+    socket.connect(&session).await?;
+
+    // Matchmaker with properties
+    let ticket = client.add_matchmaker(&session, "ranked")
+        .string_property("region", "us")
+        .numeric_property("skill", 1500.0)
+        .min_count(2)
+        .max_count(4)
+        .send()
+        .await?;
+
+    // Handle matchmaker events
+    socket.on_matchmaker_matched(|matched| {
+        println!("Match found: {}", matched.match_id);
+    }).await;
+
+    Ok(())
+}
+
+// RUDP for low-latency game data (60 Hz game loop)
+fn game_loop() -> std::io::Result<()> {
+    let server = "127.0.0.1:7351".parse().unwrap();
+    let mut rudp = RudpClient::connect(server)?;
+
+    loop {
+        // Send player state
+        rudp.send(1, b"x:100,y:200,rot:45")?;
+
+        // Receive other players
+        rudp.receive(|op_code, data| {
+            // Handle game state
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+}
+```
+
 ### Remaining Work
 
-```
 - Quick Start guide + examples
-```
+- Unity/Godot SDK via Rust FFI bindings
+- Account linking endpoints
 
 ### Recently Completed
 
+- **Rust SDK** - `kaosnet-rs` with WebSocket + RUDP dual transport support
 - Console: Chat page wired to real backend with `list_channels_with_counts`
 - Console: Social page (Groups + Friends) wired to real backend
 - Console: Tournaments page wired to real backend

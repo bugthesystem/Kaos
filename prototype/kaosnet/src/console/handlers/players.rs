@@ -3,7 +3,7 @@
 //! Players are game client accounts from the auth system.
 //! This integrates with both the client auth service and optional storage data.
 
-use crate::auth::AccountId;
+use crate::auth::{AccountId, UserAccount};
 use crate::console::auth::{Identity, Permission};
 use crate::console::server::ServerContext;
 use kaos_http::{Request, Response};
@@ -83,7 +83,8 @@ pub async fn list_players(req: Request, ctx: Arc<ServerContext>) -> Response {
                 let players: Vec<PlayerAccount> = accounts.iter().map(|a| {
                     let mut player: PlayerAccount = a.into();
                     // Check if player is online
-                    player.online = ctx.sessions.get_by_user(&a.id.0).is_some();
+                    // TODO: Track online status by user ID
+                    player.online = false;
                     player
                 }).collect();
                 let total = players.len() as u64;
@@ -104,7 +105,8 @@ pub async fn list_players(req: Request, ctx: Arc<ServerContext>) -> Response {
                 let players: Vec<PlayerAccount> = accounts.iter().map(|a| {
                     let mut player: PlayerAccount = a.into();
                     // Check if player is online
-                    player.online = ctx.sessions.get_by_user(&a.id.0).is_some();
+                    // TODO: Track online status by user ID
+                    player.online = false;
                     player
                 }).collect();
 
@@ -142,7 +144,8 @@ pub async fn get_player(req: Request, ctx: Arc<ServerContext>) -> Response {
     match ctx.client_auth.get_account(&AccountId(player_id.to_string())) {
         Ok(Some(account)) => {
             let mut player: PlayerAccount = (&account).into();
-            player.online = ctx.sessions.get_by_user(&account.id.0).is_some();
+            // TODO: Track online status by user ID
+            player.online = false;
             Response::ok().json(&player)
         }
         Ok(None) => Response::not_found().json(&serde_json::json!({

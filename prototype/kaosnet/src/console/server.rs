@@ -337,6 +337,13 @@ impl ConsoleServer {
             })
             .post("/api/auth/logout", |req| async move { handlers::logout(req).await })
             .get("/api/auth/me", |req| async move { handlers::me(req).await })
+            .post("/api/console/auth/refresh", {
+                let auth = Arc::clone(&ctx.auth);
+                move |req| {
+                    let auth = Arc::clone(&auth);
+                    async move { handlers::refresh(req, auth).await }
+                }
+            })
 
             // Game client auth routes (SDK - no admin auth required)
             .post("/api/auth/device", {

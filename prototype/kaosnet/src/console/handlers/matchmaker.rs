@@ -77,9 +77,10 @@ fn now_millis() -> i64 {
 /// Add a player to the matchmaker queue with properties.
 /// Requires client auth (session token).
 pub async fn add_to_matchmaker(req: Request, ctx: Arc<ServerContext>) -> Response {
-    // Require authentication
-    let identity = match req.ext::<Identity>() {
-        Some(id) => id.clone(),
+    // Require authentication and extract user info
+    let (user_id, username) = match req.ext::<Identity>() {
+        Some(Identity::User { id, username, .. }) => (id.to_string(), username.clone()),
+        Some(Identity::ApiKey { id, name, .. }) => (id.to_string(), name.clone()),
         None => return Response::unauthorized().json(&serde_json::json!({
             "error": "authentication required"
         })),
@@ -98,8 +99,8 @@ pub async fn add_to_matchmaker(req: Request, ctx: Arc<ServerContext>) -> Respons
     for (k, v) in body.string_properties {
         properties.insert(k, serde_json::Value::String(v));
     }
-    for (k, v) in body.numeric_properties {
-        properties.insert(k, serde_json::json!(v));
+    for (k, v) in &body.numeric_properties {
+        properties.insert(k.clone(), serde_json::json!(v));
     }
     // Store query if provided
     if let Some(ref query) = body.query {
@@ -114,9 +115,9 @@ pub async fn add_to_matchmaker(req: Request, ctx: Arc<ServerContext>) -> Respons
         id: Uuid::new_v4().to_string(),
         queue: body.queue.clone(),
         players: vec![MatchmakerPlayer {
-            user_id: identity.user_id.clone(),
+            user_id: user_id.clone(),
             session_id: 0, // HTTP doesn't have session ID
-            username: identity.username.clone(),
+            username,
             skill: body.numeric_properties.get("skill").copied().unwrap_or(1000.0),
         }],
         created_at: now_millis(),
@@ -149,16 +150,17 @@ pub async fn add_to_matchmaker(req: Request, ctx: Arc<ServerContext>) -> Respons
 /// DELETE /api/matchmaker/remove
 /// Remove a player from matchmaker queue.
 pub async fn remove_from_matchmaker(req: Request, ctx: Arc<ServerContext>) -> Response {
-    // Require authentication
-    let identity = match req.ext::<Identity>() {
-        Some(id) => id.clone(),
+    // Require authentication and extract user id
+    let user_id = match req.ext::<Identity>() {
+        Some(Identity::User { id, .. }) => id.to_string(),
+        Some(Identity::ApiKey { id, .. }) => id.to_string(),
         None => return Response::unauthorized().json(&serde_json::json!({
             "error": "authentication required"
         })),
     };
 
     // Remove player's ticket
-    match ctx.matchmaker.remove_player(&identity.user_id) {
+    match ctx.matchmaker.remove_player(&user_id) {
         Ok(ticket) => Response::ok().json(&serde_json::json!({
             "message": "removed from matchmaker",
             "ticket_id": ticket.id

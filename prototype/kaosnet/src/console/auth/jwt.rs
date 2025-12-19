@@ -30,7 +30,7 @@ impl JwtService {
         Self {
             encoding_key: EncodingKey::from_secret(secret.as_bytes()),
             decoding_key: DecodingKey::from_secret(secret.as_bytes()),
-            expiry_secs: 3600, // 1 hour
+            expiry_secs: 86400, // 24 hours (console sessions should persist longer)
         }
     }
 

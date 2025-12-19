@@ -2,7 +2,7 @@
 name = "kaos-http"
 version = "0.1.0-preview"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.83"
 license = "MIT"
 description = "HTTP/2 server for Kaos - minimal, fast, async"
 repository = "https://github.com/BugTheSysDev/Kaos"

@@ -81,6 +81,10 @@ class ApiClient {
     return this.request('GET', '/api/auth/me');
   }
 
+  async refresh(): Promise<LoginResponse> {
+    return this.request('POST', '/api/console/auth/refresh');
+  }
+
   // Status
   async getStatus(): Promise<ServerStatus> {
     return this.request('GET', '/api/status');
