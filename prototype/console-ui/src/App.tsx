@@ -19,6 +19,7 @@ import Social from './pages/Social';
 import Storage from './pages/Storage';
 import Tournaments from './pages/Tournaments';
 import Auth from './pages/Auth';
+import ApiExplorer from './pages/ApiExplorer';
 
 function AppContent() {
   const { user, isLoading } = useAuth();
@@ -75,6 +76,8 @@ function AppContent() {
         return <AccountsPage />;
       case 'apikeys':
         return <ApiKeysPage />;
+      case 'api-explorer':
+        return <ApiExplorer />;
       default:
         return <DashboardPage onNavigate={handleNavigate} />;
     }

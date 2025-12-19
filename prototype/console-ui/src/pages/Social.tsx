@@ -68,8 +68,13 @@ export default function Social() {
   const loadGroups = async () => {
     try {
       setLoading(true);
-      const data = await api.get('/api/social/groups');
-      setGroups(data.groups || []);
+      const data = await api.get<{ items: Group[]; total: number }>('/api/social/groups');
+      // Map from backend format (max_members) to frontend (max_count)
+      const mapped = (data.items || []).map(g => ({
+        ...g,
+        max_count: (g as unknown as { max_members?: number }).max_members || g.max_count || 100,
+      }));
+      setGroups(mapped);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load groups');
@@ -92,8 +97,16 @@ export default function Social() {
     if (!searchUserId.trim()) return;
     try {
       setLoading(true);
-      const data = await api.get(`/api/social/friends?user_id=${searchUserId}`);
-      setFriends(data.friends || []);
+      const data = await api.get<{ items: Friend[]; total: number }>(`/api/social/friends?user_id=${searchUserId}`);
+      // Map from backend format to frontend format
+      const mapped = (data.items || []).map(f => ({
+        ...f,
+        updated_at: f.updated_at || (f as unknown as { created_at?: number }).created_at || Date.now(),
+        state: typeof f.state === 'string' ?
+          (f.state === 'accepted' ? 0 : f.state === 'pending' ? 1 : f.state === 'blocked' ? 3 : 0)
+          : f.state,
+      }));
+      setFriends(mapped);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to search friends');

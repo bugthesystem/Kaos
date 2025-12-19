@@ -1,5 +1,6 @@
 //! Console HTTP server.
 
+use crate::auth::AuthService as ClientAuthService;
 use crate::chat::Chat;
 use crate::console::auth::AuthService;
 use crate::console::handlers;
@@ -83,6 +84,7 @@ pub struct ServerContext {
     pub sessions: Arc<SessionRegistry>,
     pub rooms: Arc<RoomRegistry>,
     pub auth: Arc<AuthService>,
+    pub client_auth: Arc<ClientAuthService>,
     pub accounts: Arc<AccountStore>,
     pub api_keys: Arc<ApiKeyStore>,
     // Game services
@@ -233,12 +235,16 @@ impl ConsoleServerBuilder {
             Arc::clone(&api_keys),
         ));
 
+        // Client auth service for game clients (SDK)
+        let client_auth = Arc::new(ClientAuthService::new(&self.config.jwt_secret));
+
         let ctx = Arc::new(ServerContext {
             start_time: Instant::now(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             sessions: self.sessions,
             rooms: self.rooms,
             auth,
+            client_auth,
             accounts,
             api_keys,
             storage: self.storage.unwrap_or_else(|| Arc::new(Storage::new())),
@@ -321,7 +327,7 @@ impl ConsoleServer {
         }
 
         router
-            // Auth routes
+            // Console auth routes (admin)
             .post("/api/auth/login", {
                 let auth = Arc::clone(&ctx.auth);
                 move |req| {
@@ -331,6 +337,36 @@ impl ConsoleServer {
             })
             .post("/api/auth/logout", |req| async move { handlers::logout(req).await })
             .get("/api/auth/me", |req| async move { handlers::me(req).await })
+
+            // Game client auth routes (SDK - no admin auth required)
+            .post("/api/auth/device", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::authenticate_device(req, ctx).await }
+                }
+            })
+            .post("/api/auth/email", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::authenticate_email(req, ctx).await }
+                }
+            })
+            .post("/api/auth/custom", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::authenticate_custom(req, ctx).await }
+                }
+            })
+            .post("/api/auth/refresh", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::refresh_token(req, ctx).await }
+                }
+            })
 
             // Status routes (may be public)
             .get("/api/status", {
@@ -761,6 +797,20 @@ impl ConsoleServer {
                     async move { handlers::get_matchmaker_stats(req, ctx).await }
                 }
             })
+            .post("/api/matchmaker/add", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::add_to_matchmaker(req, ctx).await }
+                }
+            })
+            .delete("/api/matchmaker/remove", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::remove_from_matchmaker(req, ctx).await }
+                }
+            })
 
             // Notification routes
             .get("/api/notifications", {
@@ -860,8 +910,17 @@ impl AuthMiddleware {
     }
 
     fn is_public_path(&self, path: &str) -> bool {
-        // Always public
+        // Always public - console auth
         if path == "/health" || path == "/api/auth/login" || path == "/metrics" {
+            return true;
+        }
+
+        // Always public - game client auth (SDK)
+        if path == "/api/auth/device"
+            || path == "/api/auth/email"
+            || path == "/api/auth/custom"
+            || path == "/api/auth/refresh"
+        {
             return true;
         }
 

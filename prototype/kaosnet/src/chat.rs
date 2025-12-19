@@ -450,6 +450,22 @@ impl Chat {
         self.channels.len()
     }
 
+    /// List all channels.
+    pub fn list_channels(&self) -> Vec<Channel> {
+        self.channels
+            .iter()
+            .map(|entry| entry.channel.clone())
+            .collect()
+    }
+
+    /// List all channels with member counts.
+    pub fn list_channels_with_counts(&self) -> Vec<(Channel, usize)> {
+        self.channels
+            .iter()
+            .map(|entry| (entry.channel.clone(), entry.members.len()))
+            .collect()
+    }
+
     /// Check if user is in channel.
     pub fn is_member(&self, channel_id: &str, user_id: &str) -> bool {
         self.channels.get(channel_id)

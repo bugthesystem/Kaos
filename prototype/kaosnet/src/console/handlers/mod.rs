@@ -1,6 +1,7 @@
 //! API handlers for console endpoints.
 
 mod auth;
+mod client_auth;
 mod status;
 mod sessions;
 mod rooms;
@@ -17,6 +18,7 @@ mod notifications;
 mod lua;
 
 pub use auth::*;
+pub use client_auth::*;
 pub use status::*;
 pub use sessions::*;
 pub use rooms::*;

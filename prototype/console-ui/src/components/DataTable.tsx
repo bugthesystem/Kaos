@@ -24,6 +24,11 @@ interface DataTableProps<T> {
   pagination?: boolean;
   pageSize?: number;
   compact?: boolean;
+  // Server-side pagination support
+  onSearch?: (query: string) => void;
+  totalItems?: number;
+  currentPage?: number;
+  onPageChange?: (page: number) => void;
 }
 
 type SortDirection = 'asc' | 'desc' | null;
@@ -42,7 +47,14 @@ export function DataTable<T extends Record<string, any>>({
   pagination = true,
   pageSize = 10,
   compact = true,
+  // Server-side props
+  onSearch,
+  totalItems,
+  currentPage,
+  onPageChange,
 }: DataTableProps<T>) {
+  // Determine if using server-side mode
+  const isServerSide = onSearch !== undefined || totalItems !== undefined;
   const [globalSearch, setGlobalSearch] = useState('');
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
@@ -108,18 +120,34 @@ export function DataTable<T extends Record<string, any>>({
     });
   }, [columnFiltered, sortColumn, sortDirection]);
 
-  // Paginate
+  // Paginate (skip for server-side since data is already paginated)
   const paginatedData = useMemo(() => {
+    if (isServerSide) return sortedData; // Server already paginated
     if (!pagination) return sortedData;
     const start = (page - 1) * pageSize;
     return sortedData.slice(start, start + pageSize);
-  }, [sortedData, page, pageSize, pagination]);
+  }, [sortedData, page, pageSize, pagination, isServerSide]);
 
-  const totalPages = Math.ceil(sortedData.length / pageSize);
+  // For server-side pagination, use provided values; otherwise calculate locally
+  const effectivePage = isServerSide && currentPage ? currentPage : page;
+  const effectiveTotal = isServerSide && totalItems !== undefined ? totalItems : sortedData.length;
+  const totalPages = Math.ceil(effectiveTotal / pageSize);
+
+  const handlePageChange = (newPage: number) => {
+    if (isServerSide && onPageChange) {
+      onPageChange(newPage);
+    } else {
+      setPage(newPage);
+    }
+  };
 
   const handleGlobalSearch = (value: string) => {
     setGlobalSearch(value);
-    setPage(1);
+    if (isServerSide && onSearch) {
+      onSearch(value);
+    } else {
+      setPage(1);
+    }
   };
 
   const handleColumnFilter = (key: string, value: string) => {
@@ -189,8 +217,14 @@ export function DataTable<T extends Record<string, any>>({
           )}
         </div>
         <div className="data-table-info">
-          {sortedData.length} {sortedData.length === 1 ? 'row' : 'rows'}
-          {data.length !== sortedData.length && ` (${data.length} total)`}
+          {isServerSide ? (
+            <>{effectiveTotal} {effectiveTotal === 1 ? 'row' : 'rows'}</>
+          ) : (
+            <>
+              {sortedData.length} {sortedData.length === 1 ? 'row' : 'rows'}
+              {data.length !== sortedData.length && ` (${data.length} total)`}
+            </>
+          )}
         </div>
       </div>
 
@@ -316,40 +350,40 @@ export function DataTable<T extends Record<string, any>>({
       {pagination && totalPages > 1 && (
         <div className="data-table-pagination">
           <p className="pagination-info-text">
-            {((page - 1) * pageSize) + 1}-{Math.min(page * pageSize, sortedData.length)} of {sortedData.length}
+            {((effectivePage - 1) * pageSize) + 1}-{Math.min(effectivePage * pageSize, effectiveTotal)} of {effectiveTotal}
           </p>
           <div className="pagination">
             <button
               className="pagination-btn"
-              onClick={() => setPage(1)}
-              disabled={page === 1}
+              onClick={() => handlePageChange(1)}
+              disabled={effectivePage === 1}
               title="First page"
             >
               <ChevronDoubleLeftIcon />
             </button>
             <button
               className="pagination-btn"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
+              onClick={() => handlePageChange(Math.max(1, effectivePage - 1))}
+              disabled={effectivePage === 1}
               title="Previous page"
             >
               <ChevronLeftIcon />
             </button>
             <span className="pagination-pages">
-              {page} / {totalPages}
+              {effectivePage} / {totalPages}
             </span>
             <button
               className="pagination-btn"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
+              onClick={() => handlePageChange(Math.min(totalPages, effectivePage + 1))}
+              disabled={effectivePage === totalPages}
               title="Next page"
             >
               <ChevronRightIcon />
             </button>
             <button
               className="pagination-btn"
-              onClick={() => setPage(totalPages)}
-              disabled={page === totalPages}
+              onClick={() => handlePageChange(totalPages)}
+              disabled={effectivePage === totalPages}
               title="Last page"
             >
               <ChevronDoubleRightIcon />
@@ -363,7 +397,7 @@ export function DataTable<T extends Record<string, any>>({
 
 // Badge component for status cells
 interface BadgeProps {
-  variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+  variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' | 'default';
   children: ReactNode;
 }
 

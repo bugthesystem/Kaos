@@ -130,8 +130,10 @@ pub async fn list_groups(req: Request, ctx: Arc<ServerContext>) -> Response {
                 }
             })
             .collect()
-    } else if let Some(q) = search_query {
-        ctx.social.search_groups(q, 1000)
+    } else {
+        // List all groups (optionally filtered by search query)
+        let query = search_query.unwrap_or("");
+        ctx.social.search_groups(query, 10000)
             .into_iter()
             .map(|g| {
                 let member_count = ctx.social.get_group_members(&g.id)
@@ -149,9 +151,6 @@ pub async fn list_groups(req: Request, ctx: Arc<ServerContext>) -> Response {
                 }
             })
             .collect()
-    } else {
-        // Without user_id or search, return empty (search with empty query returns nothing meaningful)
-        vec![]
     };
 
     let total = groups.len() as u32;

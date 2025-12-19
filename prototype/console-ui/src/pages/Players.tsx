@@ -1,39 +1,118 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { DataTable, Badge, type Column } from '../components/DataTable';
 import { Drawer, Field, Section } from '../components/Drawer';
-import { samplePlayers, formatRelativeTime, formatTimestamp, type Player } from '../data/sampleData';
+import { formatRelativeTime, formatTimestamp } from '../data/sampleData';
+import { api } from '../api/client';
 
-const USE_SAMPLE_DATA = true; // Toggle for demo mode
+// Player type matching backend API response
+interface PlayerDevice {
+  device_id: string;
+  linked_at: number;
+}
+
+interface Player {
+  id: string;
+  username: string | null;
+  display_name: string | null;
+  email: string | null;
+  avatar_url: string | null;
+  devices: PlayerDevice[];
+  custom_id: string | null;
+  created_at: number;
+  updated_at: number;
+  disabled: boolean;
+  metadata: Record<string, unknown>;
+  online: boolean;
+}
+
+interface PlayersResponse {
+  items: Player[];
+  total: number;
+  page: number;
+  page_size: number;
+}
 
 export default function Players() {
-  const [players] = useState<Player[]>(USE_SAMPLE_DATA ? samplePlayers : []);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const fetchPlayers = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        page: page.toString(),
+        page_size: '20',
+      });
+      if (searchQuery) {
+        params.set('search', searchQuery);
+      }
+      const response = await api.get<PlayersResponse>(`/api/players?${params}`);
+      setPlayers(response.items);
+      setTotal(response.total);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch players');
+      setPlayers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, searchQuery]);
+
+  useEffect(() => {
+    fetchPlayers();
+  }, [fetchPlayers]);
 
   const handleRowClick = (player: Player) => {
     setSelectedPlayer(player);
     setDrawerOpen(true);
   };
 
-  const handleBan = () => {
+  const handleBan = async () => {
     if (!selectedPlayer) return;
     const reason = prompt('Ban reason (optional):');
-    console.log('Banning player:', selectedPlayer.id, 'Reason:', reason);
-    // In real app: await api.post(`/api/players/${selectedPlayer.id}/ban`, { reason });
+    try {
+      await api.post(`/api/players/${selectedPlayer.id}/ban`, { reason });
+      // Refresh player data
+      setSelectedPlayer({ ...selectedPlayer, disabled: true });
+      fetchPlayers();
+    } catch (err) {
+      alert('Failed to ban player: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
   };
 
-  const handleUnban = () => {
+  const handleUnban = async () => {
     if (!selectedPlayer) return;
-    console.log('Unbanning player:', selectedPlayer.id);
-    // In real app: await api.post(`/api/players/${selectedPlayer.id}/unban`, {});
+    try {
+      await api.post(`/api/players/${selectedPlayer.id}/unban`, {});
+      setSelectedPlayer({ ...selectedPlayer, disabled: false });
+      fetchPlayers();
+    } catch (err) {
+      alert('Failed to unban player: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!selectedPlayer) return;
-    if (!confirm('Are you sure you want to delete this player?')) return;
-    console.log('Deleting player:', selectedPlayer.id);
-    setDrawerOpen(false);
-    // In real app: await api.delete(`/api/players/${selectedPlayer.id}`);
+    if (!confirm('Are you sure you want to delete this player? This action cannot be undone.')) return;
+    try {
+      await api.delete(`/api/players/${selectedPlayer.id}`);
+      setDrawerOpen(false);
+      setSelectedPlayer(null);
+      fetchPlayers();
+    } catch (err) {
+      alert('Failed to delete player: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+  };
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    setPage(1);
   };
 
   const columns: Column<Player>[] = [
@@ -45,71 +124,54 @@ export default function Players() {
           <div
             className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-semibold"
             style={{
-              background: 'linear-gradient(135deg, var(--color-accent) 0%, #8b5cf6 100%)',
+              background: player.online
+                ? 'linear-gradient(135deg, var(--color-success) 0%, #22c55e 100%)'
+                : 'linear-gradient(135deg, var(--color-accent) 0%, #8b5cf6 100%)',
               color: 'white',
             }}
           >
-            {player.username.charAt(0).toUpperCase()}
+            {(player.username || player.display_name || 'U').charAt(0).toUpperCase()}
           </div>
           <div>
-            <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
-              {player.username}
+            <div className="font-medium flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+              {player.username || player.display_name || 'Anonymous'}
+              {player.online && (
+                <span className="w-2 h-2 rounded-full bg-green-500" title="Online" />
+              )}
             </div>
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              {player.display_name || 'No display name'}
+            <div className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+              {player.id.slice(0, 8)}...
             </div>
           </div>
         </div>
       ),
     },
     {
-      key: 'level',
-      header: 'Level',
-      width: '80px',
+      key: 'email',
+      header: 'Email',
       render: (player) => (
-        <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
-          {player.level}
+        <span style={{ color: player.email ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+          {player.email || 'No email'}
         </span>
       ),
     },
     {
-      key: 'games_played',
-      header: 'Games',
+      key: 'devices',
+      header: 'Devices',
       width: '100px',
       render: (player) => (
         <span style={{ color: 'var(--text-secondary)' }}>
-          {player.games_played}
+          {player.devices.length}
         </span>
       ),
     },
     {
-      key: 'win_rate',
-      header: 'Win Rate',
-      width: '100px',
-      render: (player) => {
-        const winRate = player.games_played > 0
-          ? Math.round((player.wins / player.games_played) * 100)
-          : 0;
-        return (
-          <span
-            className="font-medium"
-            style={{
-              color: winRate >= 60 ? 'var(--color-success)' :
-                winRate >= 40 ? 'var(--color-warning)' : 'var(--color-danger)',
-            }}
-          >
-            {winRate}%
-          </span>
-        );
-      },
-    },
-    {
-      key: 'last_seen',
-      header: 'Last Seen',
-      width: '120px',
+      key: 'created_at',
+      header: 'Created',
+      width: '140px',
       render: (player) => (
         <span style={{ color: 'var(--text-muted)' }}>
-          {formatRelativeTime(player.last_seen)}
+          {formatRelativeTime(player.created_at)}
         </span>
       ),
     },
@@ -118,13 +180,19 @@ export default function Players() {
       header: 'Status',
       width: '100px',
       render: (player) =>
-        player.banned ? (
+        player.disabled ? (
           <Badge variant="danger">Banned</Badge>
+        ) : player.online ? (
+          <Badge variant="success">Online</Badge>
         ) : (
-          <Badge variant="success">Active</Badge>
+          <Badge variant="default">Offline</Badge>
         ),
     },
   ];
+
+  const activeCount = players.filter(p => !p.disabled).length;
+  const bannedCount = players.filter(p => p.disabled).length;
+  const onlineCount = players.filter(p => p.online).length;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -133,12 +201,9 @@ export default function Players() {
         <div className="page-header" style={{ marginBottom: 0 }}>
           <h1 className="page-title">Players</h1>
           <p className="page-subtitle">
-            {players.length} total players
+            {total} total players
           </p>
         </div>
-        <button className="btn btn-primary">
-          Add Player
-        </button>
       </div>
 
       {/* Stats Cards */}
@@ -147,31 +212,41 @@ export default function Players() {
           <div className="stat-icon">
             <UsersIcon className="w-6 h-6" style={{ color: 'var(--color-accent)' }} />
           </div>
-          <span className="stat-value">{players.length}</span>
+          <span className="stat-value">{total}</span>
           <span className="stat-label">Total Players</span>
         </div>
         <div className="stat-card">
           <div className="stat-icon">
-            <ActiveIcon className="w-6 h-6" style={{ color: 'var(--color-success)' }} />
+            <OnlineIcon className="w-6 h-6" style={{ color: 'var(--color-success)' }} />
           </div>
-          <span className="stat-value">{players.filter((p) => !p.banned).length}</span>
+          <span className="stat-value">{onlineCount}</span>
+          <span className="stat-label">Online Now</span>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon">
+            <ActiveIcon className="w-6 h-6" style={{ color: 'var(--color-info)' }} />
+          </div>
+          <span className="stat-value">{activeCount}</span>
           <span className="stat-label">Active</span>
         </div>
         <div className="stat-card">
           <div className="stat-icon">
             <BannedIcon className="w-6 h-6" style={{ color: 'var(--color-danger)' }} />
           </div>
-          <span className="stat-value">{players.filter((p) => p.banned).length}</span>
+          <span className="stat-value">{bannedCount}</span>
           <span className="stat-label">Banned</span>
         </div>
-        <div className="stat-card">
-          <div className="stat-icon">
-            <NewIcon className="w-6 h-6" style={{ color: 'var(--color-info)' }} />
-          </div>
-          <span className="stat-value">{players.filter((p) => p.level <= 10).length}</span>
-          <span className="stat-label">New (Level 1-10)</span>
-        </div>
       </div>
+
+      {/* Error Message */}
+      {error && (
+        <div className="p-4 rounded-lg" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+          <p style={{ color: 'var(--color-danger)' }}>{error}</p>
+          <button onClick={fetchPlayers} className="btn btn-secondary mt-2">
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Players Table */}
       <div className="card p-0 overflow-hidden">
@@ -183,10 +258,14 @@ export default function Players() {
           selectedId={selectedPlayer?.id}
           searchable
           searchPlaceholder="Search players..."
-          searchFields={['username', 'display_name', 'email']}
+          onSearch={handleSearch}
+          loading={loading}
           pagination
-          pageSize={10}
-          emptyMessage="No players found"
+          pageSize={20}
+          totalItems={total}
+          currentPage={page}
+          onPageChange={setPage}
+          emptyMessage={searchQuery ? 'No players match your search' : 'No players found'}
         />
       </div>
 
@@ -199,7 +278,7 @@ export default function Players() {
         footer={
           selectedPlayer && (
             <>
-              {selectedPlayer.banned ? (
+              {selectedPlayer.disabled ? (
                 <button onClick={handleUnban} className="btn btn-secondary flex-1">
                   Unban Player
                 </button>
@@ -222,50 +301,25 @@ export default function Players() {
               <div
                 className="w-16 h-16 rounded-xl flex items-center justify-center text-2xl font-bold"
                 style={{
-                  background: 'linear-gradient(135deg, var(--color-accent) 0%, #8b5cf6 100%)',
+                  background: selectedPlayer.online
+                    ? 'linear-gradient(135deg, var(--color-success) 0%, #22c55e 100%)'
+                    : 'linear-gradient(135deg, var(--color-accent) 0%, #8b5cf6 100%)',
                   color: 'white',
                 }}
               >
-                {selectedPlayer.username.charAt(0).toUpperCase()}
+                {(selectedPlayer.username || selectedPlayer.display_name || 'U').charAt(0).toUpperCase()}
               </div>
               <div>
                 <h2 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {selectedPlayer.username}
+                  {selectedPlayer.username || selectedPlayer.display_name || 'Anonymous'}
                 </h2>
                 <p style={{ color: 'var(--text-secondary)' }}>
                   {selectedPlayer.display_name || 'No display name'}
                 </p>
-                {selectedPlayer.banned && (
-                  <Badge variant="danger">Banned</Badge>
-                )}
-              </div>
-            </div>
-
-            {/* Stats Row */}
-            <div className="grid grid-cols-4 gap-3">
-              <div className="text-center p-3 rounded-lg" style={{ background: 'var(--bg-tertiary)' }}>
-                <div className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-                  {selectedPlayer.level}
+                <div className="flex gap-2 mt-1">
+                  {selectedPlayer.online && <Badge variant="success">Online</Badge>}
+                  {selectedPlayer.disabled && <Badge variant="danger">Banned</Badge>}
                 </div>
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Level</div>
-              </div>
-              <div className="text-center p-3 rounded-lg" style={{ background: 'var(--bg-tertiary)' }}>
-                <div className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-                  {selectedPlayer.games_played}
-                </div>
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Games</div>
-              </div>
-              <div className="text-center p-3 rounded-lg" style={{ background: 'var(--bg-tertiary)' }}>
-                <div className="text-2xl font-bold" style={{ color: 'var(--color-success)' }}>
-                  {selectedPlayer.wins}
-                </div>
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Wins</div>
-              </div>
-              <div className="text-center p-3 rounded-lg" style={{ background: 'var(--bg-tertiary)' }}>
-                <div className="text-2xl font-bold" style={{ color: 'var(--color-danger)' }}>
-                  {selectedPlayer.losses}
-                </div>
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Losses</div>
               </div>
             </div>
 
@@ -273,22 +327,20 @@ export default function Players() {
               <Field label="Player ID" mono>
                 {selectedPlayer.id}
               </Field>
+              <Field label="Username">
+                {selectedPlayer.username || 'Not set'}
+              </Field>
               <Field label="Email">
-                {selectedPlayer.email}
-                {selectedPlayer.email && (
-                  <Badge variant={selectedPlayer.email_verified ? 'success' : 'warning'}>
-                    {selectedPlayer.email_verified ? 'Verified' : 'Unverified'}
-                  </Badge>
-                )}
+                {selectedPlayer.email || 'Not set'}
+              </Field>
+              <Field label="Custom ID">
+                {selectedPlayer.custom_id || 'Not set'}
               </Field>
               <Field label="Created">
                 {formatTimestamp(selectedPlayer.created_at)}
               </Field>
               <Field label="Last Updated">
                 {formatTimestamp(selectedPlayer.updated_at)}
-              </Field>
-              <Field label="Last Seen">
-                {formatRelativeTime(selectedPlayer.last_seen)}
               </Field>
             </Section>
 
@@ -298,11 +350,16 @@ export default function Players() {
                   {selectedPlayer.devices.map((device, i) => (
                     <div
                       key={i}
-                      className="flex items-center gap-2 p-2 rounded-lg font-mono text-sm"
-                      style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
+                      className="flex items-center justify-between p-2 rounded-lg"
+                      style={{ background: 'var(--bg-tertiary)' }}
                     >
-                      <DeviceIcon className="w-4 h-4" />
-                      {device}
+                      <div className="flex items-center gap-2 font-mono text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        <DeviceIcon className="w-4 h-4" />
+                        <span>{device.device_id}</span>
+                      </div>
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        {formatRelativeTime(device.linked_at)}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -311,34 +368,22 @@ export default function Players() {
               )}
             </Section>
 
-            <Section title="Social Links">
-              {selectedPlayer.social_links.length > 0 ? (
-                <div className="space-y-2">
-                  {selectedPlayer.social_links.map((link, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center justify-between p-2 rounded-lg"
-                      style={{ background: 'var(--bg-tertiary)' }}
-                    >
-                      <div className="flex items-center gap-2 capitalize">
-                        <span style={{ color: 'var(--text-primary)' }}>{link.provider}</span>
-                      </div>
-                      <span className="font-mono text-sm" style={{ color: 'var(--text-secondary)' }}>
-                        {link.provider_id}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={{ color: 'var(--text-muted)' }}>No social accounts linked</p>
-              )}
-            </Section>
+            {selectedPlayer.metadata && Object.keys(selectedPlayer.metadata).length > 0 && (
+              <Section title="Metadata">
+                <pre
+                  className="p-3 rounded-lg text-sm font-mono overflow-auto"
+                  style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
+                >
+                  {JSON.stringify(selectedPlayer.metadata, null, 2)}
+                </pre>
+              </Section>
+            )}
 
-            {selectedPlayer.banned && selectedPlayer.ban_reason && (
-              <Section title="Ban Information">
+            {selectedPlayer.disabled && (
+              <Section title="Ban Status">
                 <div className="p-3 rounded-lg" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
                   <p className="text-sm" style={{ color: 'var(--color-danger)' }}>
-                    {selectedPlayer.ban_reason}
+                    This player is currently banned and cannot access the game.
                   </p>
                 </div>
               </Section>
@@ -359,6 +404,14 @@ function UsersIcon({ className, style }: { className?: string; style?: React.CSS
   );
 }
 
+function OnlineIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
+  return (
+    <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.07m7.072 0a5 5 0 010 7.07M13 12a1 1 0 11-2 0 1 1 0 012 0z" />
+    </svg>
+  );
+}
+
 function ActiveIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
   return (
     <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -371,14 +424,6 @@ function BannedIcon({ className, style }: { className?: string; style?: React.CS
   return (
     <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-    </svg>
-  );
-}
-
-function NewIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
-  return (
-    <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
     </svg>
   );
 }

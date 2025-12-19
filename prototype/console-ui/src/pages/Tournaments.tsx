@@ -80,8 +80,38 @@ export default function Tournaments() {
   const loadTournaments = async () => {
     try {
       setLoading(true);
-      const data = await api.get('/api/tournaments');
-      setTournaments(data.tournaments || []);
+      // Backend returns TournamentInfo with different field names
+      interface TournamentResponse {
+        id: string;
+        name: string;
+        description: string;
+        category: string;
+        state: string;
+        participant_count: number;
+        max_participants: number;
+        start_time: number;
+        end_time: number;
+        created_at: number;
+      }
+      const data = await api.get<{ items: TournamentResponse[]; total: number }>('/api/tournaments');
+      // Map from backend format to frontend format
+      const mapped = (data.items || []).map(t => ({
+        id: t.id,
+        title: t.name,
+        description: t.description,
+        category: parseInt(t.category) || 0,
+        sort_order: 'descending',
+        size: t.participant_count,
+        max_size: t.max_participants,
+        max_num_score: 1000000,
+        start_time: t.start_time,
+        end_time: t.end_time || null,
+        duration: t.end_time ? (t.end_time - t.start_time) / 1000 : 86400,
+        reset_schedule: null,
+        metadata: null,
+        created_at: t.created_at,
+      }));
+      setTournaments(mapped);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load tournaments');
@@ -92,8 +122,27 @@ export default function Tournaments() {
 
   const loadRecords = async (tournamentId: string) => {
     try {
-      const data = await api.get(`/api/tournaments/${tournamentId}/records?limit=100`);
-      setRecords(data.records || []);
+      // Backend returns TournamentRecordInfo with different field names
+      interface RecordResponse {
+        user_id: string;
+        username: string;
+        score: number;
+        rank: number;
+        num_submissions: number;
+        joined_at: number;
+      }
+      const data = await api.get<{ records: RecordResponse[] }>(`/api/tournaments/${tournamentId}/records?limit=100`);
+      // Map from backend format to frontend format
+      const mapped = (data.records || []).map(r => ({
+        owner_id: r.user_id,
+        username: r.username,
+        score: r.score,
+        num_score: r.num_submissions,
+        rank: r.rank,
+        metadata: null,
+        updated_at: r.joined_at,
+      }));
+      setRecords(mapped);
     } catch (err) {
       console.error('Failed to load records:', err);
       setRecords([]);
@@ -103,7 +152,15 @@ export default function Tournaments() {
   const createTournament = async () => {
     if (!newTournament.id.trim() || !newTournament.title.trim()) return;
     try {
-      await api.post('/api/tournaments', newTournament);
+      // Backend expects CreateTournamentRequest format
+      await api.post('/api/tournaments', {
+        id: newTournament.id,
+        name: newTournament.title,
+        description: newTournament.description || undefined,
+        category: newTournament.category.toString(),
+        duration_secs: newTournament.duration,
+        max_participants: newTournament.max_size,
+      });
       setShowCreateModal(false);
       setNewTournament({
         id: '',
@@ -121,16 +178,16 @@ export default function Tournaments() {
     }
   };
 
-  const deleteTournament = async () => {
+  const cancelTournament = async () => {
     if (!selectedTournament) return;
-    if (!confirm('Are you sure you want to delete this tournament?')) return;
+    if (!confirm('Are you sure you want to cancel this tournament?')) return;
     try {
-      await api.delete(`/api/tournaments/${selectedTournament.id}`);
+      await api.post(`/api/tournaments/${selectedTournament.id}/cancel`);
       setDrawerOpen(false);
       setSelectedTournament(null);
       loadTournaments();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to delete tournament');
+      alert(err instanceof Error ? err.message : 'Failed to cancel tournament');
     }
   };
 
@@ -412,8 +469,8 @@ export default function Tournaments() {
         width="lg"
         footer={
           selectedTournament && (
-            <button onClick={deleteTournament} className="btn btn-danger flex-1">
-              Delete Tournament
+            <button onClick={cancelTournament} className="btn btn-danger flex-1">
+              Cancel Tournament
             </button>
           )
         }

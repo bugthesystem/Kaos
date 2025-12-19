@@ -1,10 +1,11 @@
 //! Player handlers for console API.
 //!
-//! Players are game users stored in the storage service under the "players" collection.
+//! Players are game client accounts from the auth system.
+//! This integrates with both the client auth service and optional storage data.
 
+use crate::auth::AccountId;
 use crate::console::auth::{Identity, Permission};
 use crate::console::server::ServerContext;
-use crate::storage::Query;
 use kaos_http::{Request, Response};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -19,18 +20,49 @@ fn get_pagination(req: &Request) -> (usize, usize) {
 #[derive(Debug, Serialize)]
 pub struct PlayerAccount {
     pub id: String,
-    pub username: String,
+    pub username: Option<String>,
     pub display_name: Option<String>,
     pub email: Option<String>,
-    pub email_verified: bool,
-    pub devices: Vec<String>,
-    pub social_links: Vec<SocialLink>,
+    pub avatar_url: Option<String>,
+    pub devices: Vec<DeviceInfo>,
+    pub custom_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
-    pub banned: bool,
-    pub ban_reason: Option<String>,
+    pub disabled: bool,
+    pub metadata: serde_json::Value,
+    // From storage (player profile data)
+    pub online: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct DeviceInfo {
+    pub device_id: String,
+    pub linked_at: i64,
+}
+
+impl From<&UserAccount> for PlayerAccount {
+    fn from(account: &UserAccount) -> Self {
+        Self {
+            id: account.id.0.clone(),
+            username: account.username.clone(),
+            display_name: account.display_name.clone(),
+            email: account.email.clone(),
+            avatar_url: account.avatar_url.clone(),
+            devices: account.devices.iter().map(|d| DeviceInfo {
+                device_id: d.device_id.clone(),
+                linked_at: d.linked_at as i64,
+            }).collect(),
+            custom_id: account.custom_id.clone(),
+            created_at: account.created_at as i64,
+            updated_at: account.updated_at as i64,
+            disabled: account.disabled,
+            metadata: account.metadata.clone(),
+            online: false, // Will be updated from session registry
+        }
+    }
+}
+
+// Legacy type for backward compatibility
 #[derive(Debug, Serialize)]
 pub struct SocialLink {
     pub provider: String,
@@ -41,64 +73,50 @@ pub struct SocialLink {
 /// GET /api/players
 pub async fn list_players(req: Request, ctx: Arc<ServerContext>) -> Response {
     let (page, page_size) = get_pagination(&req);
-    let offset = (page - 1) * page_size;
+    let search = req.query_param("search");
 
-    // List players from the "players" collection in storage
-    match ctx.storage.query("players", Query::new().skip(offset), page_size) {
-        Ok(objects) => {
-            let players: Vec<PlayerAccount> = objects.into_iter()
-                .map(|obj| {
-                    let value = &obj.value;
-                    PlayerAccount {
-                        id: obj.user_id.clone(),
-                        username: value.get("username")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(&obj.user_id)
-                            .to_string(),
-                        display_name: value.get("display_name")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        email: value.get("email")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        email_verified: value.get("email_verified")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                        devices: value.get("devices")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|d| d.as_str().map(String::from)).collect())
-                            .unwrap_or_default(),
-                        social_links: value.get("social_links")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|link| {
-                                Some(SocialLink {
-                                    provider: link.get("provider")?.as_str()?.to_string(),
-                                    provider_id: link.get("provider_id")?.as_str()?.to_string(),
-                                    linked_at: link.get("linked_at")?.as_i64().unwrap_or(0),
-                                })
-                            }).collect())
-                            .unwrap_or_default(),
-                        created_at: value.get("created_at")
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(0),
-                        updated_at: value.get("updated_at")
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(0),
-                        banned: value.get("banned")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                        ban_reason: value.get("ban_reason")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                    }
-                })
-                .collect();
+    // Use search or list based on query
+    let result = if let Some(query) = search {
+        // Search accounts
+        match ctx.client_auth.search_accounts(query, page_size) {
+            Ok(accounts) => {
+                let players: Vec<PlayerAccount> = accounts.iter().map(|a| {
+                    let mut player: PlayerAccount = a.into();
+                    // Check if player is online
+                    player.online = ctx.sessions.get_by_user(&a.id.0).is_some();
+                    player
+                }).collect();
+                let total = players.len() as u64;
+                Ok((players, total))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    } else {
+        // List all accounts with pagination
+        let cursor = if page > 1 {
+            Some(((page - 1) * page_size).to_string())
+        } else {
+            None
+        };
 
-            // Count total (approximate)
-            let total = ctx.storage.query("players", Query::new(), 1000)
-                .map(|v| v.len())
-                .unwrap_or(0);
+        match ctx.client_auth.list_accounts(page_size, cursor.as_deref()) {
+            Ok((accounts, _next_cursor)) => {
+                let players: Vec<PlayerAccount> = accounts.iter().map(|a| {
+                    let mut player: PlayerAccount = a.into();
+                    // Check if player is online
+                    player.online = ctx.sessions.get_by_user(&a.id.0).is_some();
+                    player
+                }).collect();
 
+                let total = ctx.client_auth.count_accounts().unwrap_or(0);
+                Ok((players, total))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    };
+
+    match result {
+        Ok((players, total)) => {
             Response::ok().json(&serde_json::json!({
                 "items": players,
                 "total": total,
@@ -107,7 +125,7 @@ pub async fn list_players(req: Request, ctx: Arc<ServerContext>) -> Response {
             }))
         }
         Err(e) => Response::internal_error().json(&serde_json::json!({
-            "error": e.to_string()
+            "error": e
         })),
     }
 }
@@ -121,42 +139,11 @@ pub async fn get_player(req: Request, ctx: Arc<ServerContext>) -> Response {
         })),
     };
 
-    match ctx.storage.get(player_id, "players", "profile") {
-        Ok(Some(obj)) => {
-            let value = &obj.value;
-            Response::ok().json(&PlayerAccount {
-                id: obj.user_id.clone(),
-                username: value.get("username")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&obj.user_id)
-                    .to_string(),
-                display_name: value.get("display_name")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                email: value.get("email")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                email_verified: value.get("email_verified")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                devices: value.get("devices")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|d| d.as_str().map(String::from)).collect())
-                    .unwrap_or_default(),
-                social_links: vec![],
-                created_at: value.get("created_at")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0),
-                updated_at: value.get("updated_at")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0),
-                banned: value.get("banned")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                ban_reason: value.get("ban_reason")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-            })
+    match ctx.client_auth.get_account(&AccountId(player_id.to_string())) {
+        Ok(Some(account)) => {
+            let mut player: PlayerAccount = (&account).into();
+            player.online = ctx.sessions.get_by_user(&account.id.0).is_some();
+            Response::ok().json(&player)
         }
         Ok(None) => Response::not_found().json(&serde_json::json!({
             "error": "player not found"
@@ -193,28 +180,14 @@ pub async fn ban_player(req: Request, ctx: Arc<ServerContext>) -> Response {
         })),
     };
 
-    let ban_req: BanRequest = match req.json() {
+    let _ban_req: BanRequest = match req.json() {
         Ok(b) => b,
         Err(_) => BanRequest { reason: None },
     };
 
-    // Get existing player data
-    let mut player_data = match ctx.storage.get(player_id, "players", "profile") {
-        Ok(Some(obj)) => obj.value.clone(),
-        Ok(None) => serde_json::json!({}),
-        Err(e) => return Response::internal_error().json(&serde_json::json!({
-            "error": e.to_string()
-        })),
-    };
-
-    // Update ban status
-    player_data["banned"] = serde_json::json!(true);
-    if let Some(reason) = ban_req.reason {
-        player_data["ban_reason"] = serde_json::json!(reason);
-    }
-
-    match ctx.storage.set(player_id, "players", "profile", player_data) {
-        Ok(_) => Response::ok().json(&serde_json::json!({
+    // Disable the account (ban)
+    match ctx.client_auth.disable_account(&AccountId(player_id.to_string())) {
+        Ok(()) => Response::ok().json(&serde_json::json!({
             "message": "player banned"
         })),
         Err(e) => Response::internal_error().json(&serde_json::json!({
@@ -244,23 +217,9 @@ pub async fn unban_player(req: Request, ctx: Arc<ServerContext>) -> Response {
         })),
     };
 
-    // Get existing player data
-    let mut player_data = match ctx.storage.get(player_id, "players", "profile") {
-        Ok(Some(obj)) => obj.value.clone(),
-        Ok(None) => return Response::not_found().json(&serde_json::json!({
-            "error": "player not found"
-        })),
-        Err(e) => return Response::internal_error().json(&serde_json::json!({
-            "error": e.to_string()
-        })),
-    };
-
-    // Update ban status
-    player_data["banned"] = serde_json::json!(false);
-    player_data["ban_reason"] = serde_json::Value::Null;
-
-    match ctx.storage.set(player_id, "players", "profile", player_data) {
-        Ok(_) => Response::ok().json(&serde_json::json!({
+    // Enable the account (unban)
+    match ctx.client_auth.enable_account(&AccountId(player_id.to_string())) {
+        Ok(()) => Response::ok().json(&serde_json::json!({
             "message": "player unbanned"
         })),
         Err(e) => Response::internal_error().json(&serde_json::json!({
@@ -290,9 +249,13 @@ pub async fn delete_player(req: Request, ctx: Arc<ServerContext>) -> Response {
         })),
     };
 
-    match ctx.storage.delete(player_id, "players", "profile") {
-        Ok(_) => Response::ok().json(&serde_json::json!({
+    // Delete the account
+    match ctx.client_auth.delete_account(&AccountId(player_id.to_string())) {
+        Ok(true) => Response::ok().json(&serde_json::json!({
             "message": "player deleted"
+        })),
+        Ok(false) => Response::not_found().json(&serde_json::json!({
+            "error": "player not found"
         })),
         Err(e) => Response::internal_error().json(&serde_json::json!({
             "error": e.to_string()

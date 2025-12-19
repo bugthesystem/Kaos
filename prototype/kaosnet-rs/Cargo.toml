@@ -1,0 +1,44 @@
+[package]
+name = "kaosnet-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Official Rust client SDK for KaosNet game server"
+license = "MIT"
+repository = "https://github.com/kaosnet/kaosnet-rs"
+keywords = ["kaosnet", "game-server", "multiplayer", "websocket", "realtime"]
+categories = ["game-development", "network-programming"]
+
+[dependencies]
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# WebSocket
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# Utilities
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = []
+# Enable blocking API (for non-async contexts)
+blocking = []
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"

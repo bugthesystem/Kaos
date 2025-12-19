@@ -52,8 +52,13 @@ export default function Chat() {
   const loadChannels = async () => {
     try {
       setLoading(true);
-      const data = await api.get('/api/chat/channels');
-      setChannels(data.channels || []);
+      const data = await api.get<{ items: Channel[]; total: number }>('/api/chat/channels');
+      // Map from backend format (name) to frontend (label)
+      const mapped = (data.items || []).map(c => ({
+        ...c,
+        label: c.label || (c as { name?: string }).name || c.id,
+      }));
+      setChannels(mapped);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load channels');

@@ -387,6 +387,26 @@ impl AuthService {
         self.accounts.get(id)
     }
 
+    /// List all accounts with pagination.
+    pub fn list_accounts(&self, limit: usize, cursor: Option<&str>) -> Result<(Vec<UserAccount>, Option<String>)> {
+        self.accounts.list(limit, cursor)
+    }
+
+    /// Count total accounts.
+    pub fn count_accounts(&self) -> Result<u64> {
+        self.accounts.count()
+    }
+
+    /// Search accounts by query.
+    pub fn search_accounts(&self, query: &str, limit: usize) -> Result<Vec<UserAccount>> {
+        self.accounts.search(query, limit)
+    }
+
+    /// Delete an account.
+    pub fn delete_account(&self, id: &AccountId) -> Result<bool> {
+        self.accounts.delete(id)
+    }
+
     // ==================== Account Linking ====================
 
     /// Link a device to an existing account.

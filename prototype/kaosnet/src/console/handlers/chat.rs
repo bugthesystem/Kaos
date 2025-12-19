@@ -41,8 +41,10 @@ pub async fn list_channels(req: Request, ctx: Arc<ServerContext>) -> Response {
     let page: u32 = req.query_param("page").and_then(|p| p.parse().ok()).unwrap_or(1);
     let page_size: u32 = req.query_param("page_size").and_then(|p| p.parse().ok()).unwrap_or(20);
     let user_id = req.query_param("user_id");
+    let channel_type = req.query_param("channel_type");
 
     let channels: Vec<ChannelInfo> = if let Some(uid) = user_id {
+        // List channels for a specific user
         ctx.chat.get_user_channels(uid)
             .into_iter()
             .map(|c| {
@@ -57,9 +59,23 @@ pub async fn list_channels(req: Request, ctx: Arc<ServerContext>) -> Response {
             })
             .collect()
     } else {
-        // Would need to iterate all channels - for now return empty
-        // In production, you'd query the database
-        vec![]
+        // List all channels
+        ctx.chat.list_channels_with_counts()
+            .into_iter()
+            .map(|(c, member_count)| ChannelInfo {
+                id: c.id,
+                name: c.name,
+                channel_type: channel_type_str(c.channel_type).to_string(),
+                member_count: member_count as u32,
+                created_at: c.created_at,
+            })
+            .collect()
+    };
+
+    // Filter by channel type if specified
+    let channels: Vec<ChannelInfo> = match channel_type {
+        Some(t) => channels.into_iter().filter(|c| c.channel_type == t).collect(),
+        None => channels,
     };
 
     let total = channels.len() as u32;
