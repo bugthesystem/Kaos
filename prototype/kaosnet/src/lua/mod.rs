@@ -77,7 +77,7 @@ impl LuaVm {
 
     fn load_script(&self, path: &Path) -> Result<()> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| KaosNetError::Io(e))?;
+            .map_err(KaosNetError::Io)?;
         self.lua.load(&content).exec()?;
         Ok(())
     }
@@ -151,8 +151,8 @@ impl LuaRuntime {
             return Ok(());
         }
 
-        for entry in std::fs::read_dir(dir).map_err(|e| KaosNetError::Io(e))? {
-            let entry = entry.map_err(|e| KaosNetError::Io(e))?;
+        for entry in std::fs::read_dir(dir).map_err(KaosNetError::Io)? {
+            let entry = entry.map_err(KaosNetError::Io)?;
             let path = entry.path();
             if path.extension().map(|e| e == "lua").unwrap_or(false) {
                 self.load_script(&path)?;
@@ -285,12 +285,10 @@ impl LuaRuntime {
             let broadcasts: Vec<MatchBroadcast> = match iter.next() {
                 Some(Value::Table(t)) => {
                     let mut bs = Vec::new();
-                    for pair in t.pairs::<i64, Table>() {
-                        if let Ok((_, b)) = pair {
-                            bs.push(MatchBroadcast {
-                                data: b.get::<Vec<u8>>("data").unwrap_or_default(),
-                            });
-                        }
+                    for (_, b) in t.pairs::<i64, Table>().flatten() {
+                        bs.push(MatchBroadcast {
+                            data: b.get::<Vec<u8>>("data").unwrap_or_default(),
+                        });
                     }
                     bs
                 }

@@ -152,3 +152,20 @@ pub async fn get_matchmaker_stats(req: Request, ctx: Arc<ServerContext>) -> Resp
         }
     }
 }
+
+/// GET /api/matchmaker/queues
+pub async fn list_matchmaker_queues(_req: Request, ctx: Arc<ServerContext>) -> Response {
+    let queues: Vec<QueueStatsInfo> = ctx.matchmaker.list_queues()
+        .into_iter()
+        .map(|stats| QueueStatsInfo {
+            queue: stats.queue,
+            tickets: stats.tickets,
+            players: stats.players,
+            longest_wait_secs: stats.longest_wait_secs,
+        })
+        .collect();
+
+    Response::ok().json(&serde_json::json!({
+        "queues": queues
+    }))
+}

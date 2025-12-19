@@ -334,6 +334,45 @@ impl PostgresBackend {
         }
         Ok(count)
     }
+
+    /// List all unique collection names.
+    pub async fn list_collections_async(&self) -> Vec<String> {
+        let rows = sqlx::query("SELECT DISTINCT collection FROM storage_objects ORDER BY collection")
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+
+        rows.iter().map(|r| r.get("collection")).collect()
+    }
+
+    /// List all objects in a collection (across all users).
+    pub async fn list_all_in_collection_async(&self, collection: &str) -> Vec<StorageObject> {
+        let rows = sqlx::query(
+            r#"
+            SELECT user_id, collection, key, value, version, permission,
+                   EXTRACT(EPOCH FROM created_at)::bigint * 1000 as created_at,
+                   EXTRACT(EPOCH FROM updated_at)::bigint * 1000 as updated_at
+            FROM storage_objects
+            WHERE collection = $1
+            ORDER BY key
+            "#
+        )
+        .bind(collection)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+
+        rows.iter().map(|r| StorageObject {
+            user_id: r.get("user_id"),
+            collection: r.get("collection"),
+            key: r.get("key"),
+            value: r.get("value"),
+            version: r.get::<i64, _>("version") as u64,
+            permission: Self::int_to_permission(r.get("permission")),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+        }).collect()
+    }
 }
 
 /// Sync wrapper for PostgresBackend that implements StorageBackend.
@@ -417,6 +456,14 @@ impl StorageBackend for PostgresSyncBackend {
 
     fn count(&self, collection: &str, query: Query) -> Result<u64> {
         self.runtime.block_on(self.inner.count_async(collection, query))
+    }
+
+    fn list_collections(&self) -> Vec<String> {
+        self.runtime.block_on(self.inner.list_collections_async())
+    }
+
+    fn list_all_in_collection(&self, collection: &str) -> Vec<StorageObject> {
+        self.runtime.block_on(self.inner.list_all_in_collection_async(collection))
     }
 }
 

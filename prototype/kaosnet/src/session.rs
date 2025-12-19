@@ -94,6 +94,21 @@ impl From<&Session> for Presence {
     }
 }
 
+/// Session state counts
+#[derive(Debug, Clone, Default)]
+pub struct SessionCounts {
+    pub connecting: u32,
+    pub connected: u32,
+    pub authenticated: u32,
+    pub disconnecting: u32,
+}
+
+impl SessionCounts {
+    pub fn total(&self) -> u32 {
+        self.connecting + self.connected + self.authenticated + self.disconnecting
+    }
+}
+
 /// Session registry
 pub struct SessionRegistry {
     sessions: DashMap<u64, Session>,
@@ -145,6 +160,20 @@ impl SessionRegistry {
 
     pub fn count(&self) -> usize {
         self.sessions.len()
+    }
+
+    /// Count sessions by state
+    pub fn count_by_state(&self) -> SessionCounts {
+        let mut counts = SessionCounts::default();
+        for session in self.sessions.iter() {
+            match session.state {
+                SessionState::Connecting => counts.connecting += 1,
+                SessionState::Connected => counts.connected += 1,
+                SessionState::Authenticated => counts.authenticated += 1,
+                SessionState::Disconnecting => counts.disconnecting += 1,
+            }
+        }
+        counts
     }
 
     /// Remove stale sessions, returns removed IDs

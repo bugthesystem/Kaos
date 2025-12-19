@@ -141,6 +141,16 @@ impl Storage {
     pub fn count(&self, collection: &str, query: Query) -> Result<u64> {
         self.backend.count(collection, query)
     }
+
+    /// List all unique collection names.
+    pub fn list_collections(&self) -> Vec<String> {
+        self.backend.list_collections()
+    }
+
+    /// List all objects in a collection (across all users).
+    pub fn list_all_in_collection(&self, collection: &str) -> Vec<StorageObject> {
+        self.backend.list_all_in_collection(collection)
+    }
 }
 
 impl Default for Storage {

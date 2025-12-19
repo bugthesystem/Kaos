@@ -159,7 +159,16 @@ impl RateLimiter {
 
     /// Check global rate limit (all clients combined)
     pub fn check_global(&self, max_requests_per_second: u64) -> bool {
-        let mut window_start = self.global_window_start.lock().unwrap();
+        // Use unwrap_or_else to handle poisoned mutex gracefully
+        // If the mutex is poisoned (another thread panicked while holding it),
+        // we still try to continue by resetting the window
+        let mut window_start = self.global_window_start
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                // Recover from poisoned mutex - this is a best-effort approach
+                // The rate limiting may be slightly off after recovery
+                poisoned.into_inner()
+            });
         let now = Instant::now();
 
         // Reset counter if window has passed

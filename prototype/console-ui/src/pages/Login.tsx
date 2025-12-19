@@ -146,7 +146,7 @@ export function LoginPage() {
           </button>
         </form>
 
-        {/* Hint */}
+        {/* Version info */}
         <div className="mt-6 text-center">
           <div
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm"
@@ -156,7 +156,7 @@ export function LoginPage() {
             }}
           >
             <InfoIcon className="w-4 h-4 text-cyan-400" />
-            <span style={{ color: 'var(--text-secondary)' }}>Default: <span className="text-cyan-500 font-medium">admin / admin</span></span>
+            <span style={{ color: 'var(--text-secondary)' }}>Secure access to your game server</span>
           </div>
         </div>
 

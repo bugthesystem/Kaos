@@ -175,7 +175,11 @@ class ApiClient {
   }
 
   async getScript(name: string): Promise<LuaScriptInfo> {
-    return this.request('GET', `/api/lua/scripts/${name}`);
+    return this.request('GET', `/api/lua/scripts/${encodeURIComponent(name)}`);
+  }
+
+  async getScriptContent(name: string): Promise<{ name: string; content: string; size: number }> {
+    return this.request('GET', `/api/lua/scripts/${encodeURIComponent(name)}/content`);
   }
 
   async listRpcs(page = 1, pageSize = 20): Promise<PaginatedList<RpcInfo>> {

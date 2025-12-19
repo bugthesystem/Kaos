@@ -166,6 +166,7 @@ impl HookOperation {
 
 /// Context passed to hooks with request information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct HookContext {
     /// User ID (if authenticated)
     pub user_id: Option<String>,
@@ -180,17 +181,6 @@ pub struct HookContext {
     pub vars: std::collections::HashMap<String, String>,
 }
 
-impl Default for HookContext {
-    fn default() -> Self {
-        Self {
-            user_id: None,
-            username: None,
-            session_id: None,
-            client_ip: None,
-            vars: std::collections::HashMap::new(),
-        }
-    }
-}
 
 /// Result from a before hook.
 #[derive(Debug, Clone)]
@@ -237,7 +227,7 @@ impl HookRegistry {
     pub fn register_before(&self, op: HookOperation, hook: impl BeforeHook + 'static) {
         self.before_hooks
             .entry(op)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(Box::new(hook));
     }
 
@@ -245,7 +235,7 @@ impl HookRegistry {
     pub fn register_after(&self, op: HookOperation, hook: impl AfterHook + 'static) {
         self.after_hooks
             .entry(op)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(Box::new(hook));
     }
 
@@ -253,7 +243,7 @@ impl HookRegistry {
     pub fn register_lua_before(&self, op: HookOperation, function_name: String) {
         self.lua_before_hooks
             .entry(op)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(function_name);
     }
 
@@ -261,7 +251,7 @@ impl HookRegistry {
     pub fn register_lua_after(&self, op: HookOperation, function_name: String) {
         self.lua_after_hooks
             .entry(op)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(function_name);
     }
 

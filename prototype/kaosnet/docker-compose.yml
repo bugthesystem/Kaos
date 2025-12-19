@@ -1,15 +1,21 @@
 # KaosNet Docker Compose
 #
 # Quick Start:
-#   make docker-up     # Start all services
-#   make docker-down   # Stop all services
-#   make docker-reset  # Reset and reseed
+#   1. Copy ../.env.example to ../.env and configure secrets
+#   2. make docker-up     # Start all services
+#   3. make docker-down   # Stop all services
+#   4. make docker-reset  # Reset and reseed
 #
 # Services:
 #   - kaos-io:  Game server (ws://localhost:7351, console http://localhost:7350)
 #   - web:      Static web client (http://localhost:8080)
 #   - postgres: Database (localhost:5432)
 #   - console:  Admin UI (http://localhost:3000)
+#
+# Security:
+#   - Set KAOS_JWT_SECRET to a secure random value (min 32 chars)
+#   - Set KAOS_ADMIN_PASSWORD to a strong password
+#   - Change POSTGRES_PASSWORD in production
 
 services:
   # Kaos.io Game Server (WebSocket + Console API)
@@ -21,9 +27,15 @@ services:
       - "7350:7350"   # Console API
       - "7351:7351"   # WebSocket game
     environment:
-      - KAOS_ADMIN_PASSWORD=admin
-      - DATABASE_URL=postgres://kaos:kaos@postgres:5432/kaosnet
-      - RUST_LOG=info
+      - KAOS_ENV=${KAOS_ENV:-development}
+      - KAOS_JWT_SECRET=${KAOS_JWT_SECRET:?Set KAOS_JWT_SECRET in .env}
+      - KAOS_ADMIN_USERNAME=${KAOS_ADMIN_USERNAME:-admin}
+      - KAOS_ADMIN_PASSWORD=${KAOS_ADMIN_PASSWORD:?Set KAOS_ADMIN_PASSWORD in .env}
+      - KAOS_CONSOLE_BIND=0.0.0.0:7350
+      - KAOS_WS_BIND=0.0.0.0:7351
+      - KAOS_LUA_SCRIPTS=/app/scripts
+      - DATABASE_URL=postgres://${POSTGRES_USER:-kaos}:${POSTGRES_PASSWORD:-kaos}@postgres:5432/${POSTGRES_DB:-kaosnet}
+      - RUST_LOG=${RUST_LOG:-info}
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,17 +60,17 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: kaos
-      POSTGRES_PASSWORD: kaos
-      POSTGRES_DB: kaosnet
+      POSTGRES_USER: ${POSTGRES_USER:-kaos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kaos}
+      POSTGRES_DB: ${POSTGRES_DB:-kaosnet}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./scripts/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kaos -d kaosnet"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kaos} -d ${POSTGRES_DB:-kaosnet}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -74,7 +86,7 @@ services:
     ports:
       - "3000:80"
     environment:
-      - VITE_API_URL=http://localhost:7350
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:7350}
     depends_on:
       - kaos-io
     restart: unless-stopped

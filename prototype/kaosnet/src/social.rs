@@ -46,19 +46,16 @@ pub struct Friend {
 /// User presence status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PresenceStatus {
     Online,
     Away,
     Busy,
     InGame,
+    #[default]
     Offline,
 }
 
-impl Default for PresenceStatus {
-    fn default() -> Self {
-        Self::Offline
-    }
-}
 
 /// User presence information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,18 +100,15 @@ pub struct Group {
 /// Group member role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum GroupRole {
+    #[default]
     Member = 0,
     Moderator = 1,
     Admin = 2,
     Owner = 3,
 }
 
-impl Default for GroupRole {
-    fn default() -> Self {
-        Self::Member
-    }
-}
 
 /// A group member.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,7 +157,7 @@ impl Social {
             return Err(SocialError::Blocked);
         }
 
-        let user_friends = self.friends.entry(user_id.to_string()).or_insert_with(DashMap::new);
+        let user_friends = self.friends.entry(user_id.to_string()).or_default();
         let now = now_millis();
 
         // Check for existing relationship
@@ -228,7 +222,7 @@ impl Social {
         their_request.updated_at = now;
 
         // Add reciprocal relationship
-        let user_friends = self.friends.entry(user_id.to_string()).or_insert_with(DashMap::new);
+        let user_friends = self.friends.entry(user_id.to_string()).or_default();
 
         // Get friend's username from the request
         let friend_username = self.get_username(friend_id).unwrap_or_default();
@@ -258,7 +252,7 @@ impl Social {
 
     /// Block a user.
     pub fn block_user(&self, user_id: &str, blocked_id: &str) -> Result<(), SocialError> {
-        let user_friends = self.friends.entry(user_id.to_string()).or_insert_with(DashMap::new);
+        let user_friends = self.friends.entry(user_id.to_string()).or_default();
         let now = now_millis();
 
         let blocked_username = self.get_username(blocked_id).unwrap_or_default();
@@ -411,7 +405,7 @@ impl Social {
 
         // Track user's groups
         self.user_groups.entry(creator_id.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(group_id);
 
         Ok(group)
@@ -445,7 +439,7 @@ impl Social {
         });
 
         self.user_groups.entry(user_id.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(group_id.to_string());
 
         Ok(())

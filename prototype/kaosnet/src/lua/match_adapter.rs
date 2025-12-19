@@ -350,7 +350,7 @@ fn lua_value_to_json(lua: &mlua::Lua, value: &Value) -> mlua::Result<serde_json:
     let json_table: Table = globals.get("json")?;
     let encode_fn: Function = json_table.get("encode")?;
     let json_str: String = encode_fn.call(value.clone())?;
-    serde_json::from_str(&json_str).map_err(|e| mlua::Error::external(e))
+    serde_json::from_str(&json_str).map_err(mlua::Error::external)
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@ use crate::social::Social;
 use crate::storage::Storage;
 use crate::tournament::Tournaments;
 use kaos_http::middleware::{CorsMiddleware, LoggingMiddleware, Middleware, Next};
-use kaos_http::{HttpServer, Request, Response, Router};
+use kaos_http::{HttpServer, Method, Request, Response, Router};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -35,9 +35,43 @@ pub struct ConsoleConfig {
 impl Default for ConsoleConfig {
     fn default() -> Self {
         Self {
-            bind_addr: "127.0.0.1:7350".to_string(),
-            jwt_secret: "change-me-in-production".to_string(),
-            allow_public_status: true,
+            bind_addr: std::env::var("KAOS_CONSOLE_BIND")
+                .unwrap_or_else(|_| "127.0.0.1:7350".to_string()),
+            jwt_secret: std::env::var("KAOS_JWT_SECRET")
+                .unwrap_or_else(|_| "change-me-in-production".to_string()),
+            allow_public_status: std::env::var("KAOS_PUBLIC_STATUS")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(true),
+        }
+    }
+}
+
+impl ConsoleConfig {
+    /// Validates the configuration, returning errors for insecure defaults in production.
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        // Check for insecure JWT secret
+        if self.jwt_secret == "change-me-in-production" {
+            if std::env::var("KAOS_ENV").map(|v| v == "production").unwrap_or(false) {
+                errors.push("KAOS_JWT_SECRET must be set in production".to_string());
+            } else {
+                #[cfg(feature = "telemetry")]
+                tracing::warn!("Using default JWT secret - set KAOS_JWT_SECRET in production");
+                #[cfg(not(feature = "telemetry"))]
+                eprintln!("Warning: Using default JWT secret - set KAOS_JWT_SECRET in production");
+            }
+        }
+
+        // Check JWT secret length
+        if self.jwt_secret.len() < 32 {
+            errors.push("KAOS_JWT_SECRET should be at least 32 characters".to_string());
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
         }
     }
 }
@@ -59,6 +93,8 @@ pub struct ServerContext {
     pub chat: Arc<Chat>,
     pub matchmaker: Arc<Matchmaker>,
     pub notifications: Arc<Notifications>,
+    // Lua script path (optional)
+    pub lua_script_path: Option<String>,
     // Metrics (optional)
     #[cfg(feature = "metrics")]
     pub metrics: Option<Arc<Metrics>>,
@@ -82,6 +118,7 @@ pub struct ConsoleServerBuilder {
     chat: Option<Arc<Chat>>,
     matchmaker: Option<Arc<Matchmaker>>,
     notifications: Option<Arc<Notifications>>,
+    lua_script_path: Option<String>,
     #[cfg(feature = "metrics")]
     metrics: Option<Arc<Metrics>>,
 }
@@ -104,6 +141,7 @@ impl ConsoleServerBuilder {
             chat: None,
             matchmaker: None,
             notifications: None,
+            lua_script_path: None,
             #[cfg(feature = "metrics")]
             metrics: None,
         }
@@ -151,6 +189,12 @@ impl ConsoleServerBuilder {
         self
     }
 
+    /// Set Lua script path for serving script contents.
+    pub fn lua_script_path(mut self, path: impl Into<String>) -> Self {
+        self.lua_script_path = Some(path.into());
+        self
+    }
+
     /// Set metrics service.
     #[cfg(feature = "metrics")]
     pub fn metrics(mut self, metrics: Arc<Metrics>) -> Self {
@@ -166,11 +210,21 @@ impl ConsoleServerBuilder {
         // Create default admin account if none exists
         if accounts.list().is_empty() {
             use crate::console::auth::Role;
-            accounts.create("admin", "admin", Role::Admin);
+            let admin_password = std::env::var("KAOS_ADMIN_PASSWORD")
+                .unwrap_or_else(|_| {
+                    #[cfg(not(feature = "telemetry"))]
+                    eprintln!("Warning: KAOS_ADMIN_PASSWORD not set, using insecure default");
+                    #[cfg(feature = "telemetry")]
+                    tracing::warn!("KAOS_ADMIN_PASSWORD not set, using insecure default");
+                    "admin".to_string()
+                });
+            let admin_username = std::env::var("KAOS_ADMIN_USERNAME")
+                .unwrap_or_else(|_| "admin".to_string());
+            accounts.create(&admin_username, &admin_password, Role::Admin);
             #[cfg(not(feature = "telemetry"))]
-            eprintln!("Created default admin account: admin/admin");
+            eprintln!("Created admin account: {}", admin_username);
             #[cfg(feature = "telemetry")]
-            tracing::warn!("Created default admin account: admin/admin");
+            tracing::info!("Created admin account: {}", admin_username);
         }
 
         let auth = Arc::new(AuthService::new(
@@ -194,6 +248,7 @@ impl ConsoleServerBuilder {
             chat: self.chat.unwrap_or_else(|| Arc::new(Chat::new())),
             matchmaker: self.matchmaker.unwrap_or_else(|| Arc::new(Matchmaker::new())),
             notifications: self.notifications.unwrap_or_else(|| Arc::new(Notifications::new())),
+            lua_script_path: self.lua_script_path,
             #[cfg(feature = "metrics")]
             metrics: self.metrics,
         });
@@ -471,6 +526,20 @@ impl ConsoleServer {
             })
 
             // Storage routes
+            .get("/api/storage/collections", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_collections(req, ctx).await }
+                }
+            })
+            .get("/api/storage/objects", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_storage_objects(req, ctx).await }
+                }
+            })
             .get("/api/storage", {
                 let ctx = Arc::clone(&ctx);
                 move |req| {
@@ -656,6 +725,13 @@ impl ConsoleServer {
             })
 
             // Matchmaker routes
+            .get("/api/matchmaker/queues", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_matchmaker_queues(req, ctx).await }
+                }
+            })
             .get("/api/matchmaker/tickets", {
                 let ctx = Arc::clone(&ctx);
                 move |req| {
@@ -737,6 +813,13 @@ impl ConsoleServer {
                     async move { handlers::get_script(req, ctx).await }
                 }
             })
+            .get("/api/lua/scripts/:name/content", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_script_content(req, ctx).await }
+                }
+            })
             .get("/api/lua/rpcs", {
                 let ctx = Arc::clone(&ctx);
                 move |req| {
@@ -799,6 +882,11 @@ impl Middleware for AuthMiddleware {
         Box::pin(async move {
             let path = req.path().to_string();
 
+            // Skip auth for OPTIONS requests (CORS preflight)
+            if req.method() == &Method::OPTIONS {
+                return next.run(req).await;
+            }
+
             // Skip auth for public paths
             if self.is_public_path(&path) {
                 return next.run(req).await;
@@ -860,6 +948,11 @@ impl Middleware for RateLimitMiddleware {
         next: Next<'a>,
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
         Box::pin(async move {
+            // Skip rate limiting for OPTIONS requests (CORS preflight)
+            if req.method() == &Method::OPTIONS {
+                return next.run(req).await;
+            }
+
             let path = req.path();
             let client_id = Self::get_client_id(&req);
 

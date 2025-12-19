@@ -63,6 +63,10 @@ export interface LuaScriptInfo {
   path: string;
   size: number;
   loaded: boolean;
+  content?: string;
+  error?: string;
+  hooks?: string[];
+  rpcs?: string[];
 }
 
 export interface RpcInfo {

@@ -265,8 +265,8 @@ impl Chat {
         self.dm_channels.insert(key, channel.id.clone());
 
         // Add to user channels
-        self.user_channels.entry(u1.to_string()).or_insert_with(HashSet::new).insert(channel.id.clone());
-        self.user_channels.entry(u2.to_string()).or_insert_with(HashSet::new).insert(channel.id.clone());
+        self.user_channels.entry(u1.to_string()).or_default().insert(channel.id.clone());
+        self.user_channels.entry(u2.to_string()).or_default().insert(channel.id.clone());
 
         channel
     }
@@ -307,7 +307,7 @@ impl Chat {
 
         self.user_channels
             .entry(user_id.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(channel_id.to_string());
 
         Ok(())

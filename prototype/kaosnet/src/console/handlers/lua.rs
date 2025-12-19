@@ -5,6 +5,7 @@ use crate::console::server::ServerContext;
 use crate::console::types::PaginatedList;
 use kaos_http::{Request, Response};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 
 /// Lua script info
@@ -14,6 +15,14 @@ pub struct LuaScriptInfo {
     pub path: String,
     pub size: u64,
     pub loaded: bool,
+}
+
+/// Script content response
+#[derive(Debug, Serialize)]
+pub struct ScriptContent {
+    pub name: String,
+    pub content: String,
+    pub size: u64,
 }
 
 /// RPC function info
@@ -31,7 +40,7 @@ pub struct ExecuteRpcRequest {
 }
 
 /// GET /api/lua/scripts
-pub async fn list_scripts(req: Request, _ctx: Arc<ServerContext>) -> Response {
+pub async fn list_scripts(req: Request, ctx: Arc<ServerContext>) -> Response {
     // Check permission
     if !check_permission(&req, Permission::ViewLua) {
         return Response::forbidden().json(&serde_json::json!({
@@ -39,27 +48,54 @@ pub async fn list_scripts(req: Request, _ctx: Arc<ServerContext>) -> Response {
         }));
     }
 
-    // In production, this would scan the scripts directory
-    // For now, return info about loaded modules from the Lua runtime
-    let scripts = vec![
-        LuaScriptInfo {
+    let mut scripts = Vec::new();
+
+    // If we have a script path configured, scan it for .lua files
+    if let Some(ref script_path) = ctx.lua_script_path {
+        let path = Path::new(script_path);
+        if path.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let entry_path = entry.path();
+                    if entry_path.extension().map_or(false, |e| e == "lua") {
+                        let name = entry_path
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                        scripts.push(LuaScriptInfo {
+                            name,
+                            path: entry_path.to_string_lossy().to_string(),
+                            size,
+                            loaded: true,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // If no scripts found from filesystem, return placeholder
+    if scripts.is_empty() {
+        scripts.push(LuaScriptInfo {
             name: "game".to_string(),
             path: "scripts/game.lua".to_string(),
             size: 0,
             loaded: true,
-        },
-    ];
+        });
+    }
 
+    let total = scripts.len() as u32;
     Response::ok().json(&PaginatedList {
         items: scripts,
-        total: 1,
+        total,
         page: 1,
         page_size: 20,
     })
 }
 
 /// GET /api/lua/scripts/:name
-pub async fn get_script(req: Request, _ctx: Arc<ServerContext>) -> Response {
+pub async fn get_script(req: Request, ctx: Arc<ServerContext>) -> Response {
     if !check_permission(&req, Permission::ViewLua) {
         return Response::forbidden().json(&serde_json::json!({
             "error": "insufficient permissions"
@@ -73,13 +109,67 @@ pub async fn get_script(req: Request, _ctx: Arc<ServerContext>) -> Response {
         })),
     };
 
-    // Return script metadata
+    // Try to get actual file info if script path is configured
+    if let Some(ref script_path) = ctx.lua_script_path {
+        let file_path = Path::new(script_path).join(format!("{}.lua", name));
+        if file_path.exists() {
+            let size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+            return Response::ok().json(&LuaScriptInfo {
+                name: name.to_string(),
+                path: file_path.to_string_lossy().to_string(),
+                size,
+                loaded: true,
+            });
+        }
+    }
+
+    // Return script metadata with default path
     Response::ok().json(&LuaScriptInfo {
         name: name.to_string(),
         path: format!("scripts/{}.lua", name),
         size: 0,
         loaded: true,
     })
+}
+
+/// GET /api/lua/scripts/:name/content
+pub async fn get_script_content(req: Request, ctx: Arc<ServerContext>) -> Response {
+    if !check_permission(&req, Permission::ViewLua) {
+        return Response::forbidden().json(&serde_json::json!({
+            "error": "insufficient permissions"
+        }));
+    }
+
+    let name = match req.param("name") {
+        Some(n) => n,
+        None => return Response::bad_request().json(&serde_json::json!({
+            "error": "missing script name"
+        })),
+    };
+
+    // Read script content from file
+    if let Some(ref script_path) = ctx.lua_script_path {
+        let file_path = Path::new(script_path).join(format!("{}.lua", name));
+        match std::fs::read_to_string(&file_path) {
+            Ok(content) => {
+                let size = content.len() as u64;
+                return Response::ok().json(&ScriptContent {
+                    name: name.to_string(),
+                    content,
+                    size,
+                });
+            }
+            Err(e) => {
+                return Response::not_found().json(&serde_json::json!({
+                    "error": format!("script not found: {}", e)
+                }));
+            }
+        }
+    }
+
+    Response::not_found().json(&serde_json::json!({
+        "error": "lua script path not configured"
+    }))
 }
 
 /// GET /api/lua/rpcs

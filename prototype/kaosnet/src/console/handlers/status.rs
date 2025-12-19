@@ -10,12 +10,12 @@ pub async fn get_status(_req: Request, ctx: Arc<ServerContext>) -> Response {
     let uptime = ctx.start_time.elapsed().as_secs();
 
     // Count sessions by state
-    let total_sessions = ctx.sessions.count() as u32;
+    let counts = ctx.sessions.count_by_state();
     let session_stats = SessionStats {
-        total: total_sessions,
-        connecting: 0,    // TODO: track by state
-        connected: total_sessions,
-        authenticated: 0, // TODO: track authenticated
+        total: counts.total(),
+        connecting: counts.connecting,
+        connected: counts.connected,
+        authenticated: counts.authenticated,
     };
 
     // Count rooms

@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 /// Permission level for storage objects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ObjectPermission {
     /// Only the owner can read/write.
+    #[default]
     OwnerOnly,
     /// Anyone can read, only owner can write.
     PublicRead,
@@ -14,11 +16,6 @@ pub enum ObjectPermission {
     PublicReadWrite,
 }
 
-impl Default for ObjectPermission {
-    fn default() -> Self {
-        Self::OwnerOnly
-    }
-}
 
 /// A stored object.
 #[derive(Debug, Clone, Serialize, Deserialize)]

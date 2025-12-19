@@ -51,7 +51,7 @@ pub trait TransportServer: Send {
 
 /// Convert WsError to io::Error
 fn ws_to_io(e: kaos_ws::WsError) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e.to_string())
+    io::Error::other(e.to_string())
 }
 
 /// WebSocket server wrapper

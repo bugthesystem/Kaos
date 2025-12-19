@@ -132,7 +132,7 @@ impl Matchmaker {
 
     /// Register a queue configuration.
     pub fn register_queue(&self, config: MatchmakerConfig) {
-        self.queues.entry(config.queue.clone()).or_insert_with(DashMap::new);
+        self.queues.entry(config.queue.clone()).or_default();
         self.configs.insert(config.queue.clone(), config);
     }
 
@@ -273,6 +273,14 @@ impl Matchmaker {
             players: total_players,
             longest_wait_secs: longest_wait.as_secs(),
         })
+    }
+
+    /// List all registered queues with their stats.
+    pub fn list_queues(&self) -> Vec<QueueStats> {
+        self.configs
+            .iter()
+            .filter_map(|entry| self.stats(entry.key()))
+            .collect()
     }
 
     fn process_queue(&self, config: &MatchmakerConfig, queue: &DashMap<String, QueuedTicket>) -> Vec<MatchmakerMatch> {

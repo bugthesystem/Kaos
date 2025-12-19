@@ -38,8 +38,10 @@ pub enum TournamentState {
 /// Tournament recurrence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TournamentReset {
     /// One-time tournament.
+    #[default]
     Never,
     /// Resets daily.
     Daily,
@@ -49,27 +51,19 @@ pub enum TournamentReset {
     Monthly,
 }
 
-impl Default for TournamentReset {
-    fn default() -> Self {
-        Self::Never
-    }
-}
 
 /// Tournament sort order for ranking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TournamentSortOrder {
     /// Higher score is better (default).
+    #[default]
     Descending,
     /// Lower score is better (e.g., speedruns).
     Ascending,
 }
 
-impl Default for TournamentSortOrder {
-    fn default() -> Self {
-        Self::Descending
-    }
-}
 
 /// Tournament configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,8 +99,10 @@ pub struct TournamentConfig {
 /// Score operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ScoreOperator {
     /// Keep the best score.
+    #[default]
     Best,
     /// Keep the latest score.
     Latest,
@@ -116,11 +112,6 @@ pub enum ScoreOperator {
     Increment,
 }
 
-impl Default for ScoreOperator {
-    fn default() -> Self {
-        Self::Best
-    }
-}
 
 /// A tournament instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,7 +238,7 @@ impl Tournaments {
         // Index by category
         self.by_category
             .entry(config.category.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(config.id);
 
         Ok(tournament)
@@ -394,9 +385,7 @@ impl Tournaments {
             ScoreOperator::Best => {
                 if ascending {
                     if record.num_submissions == 0 || score < record.score { score } else { record.score }
-                } else {
-                    if score > record.score { score } else { record.score }
-                }
+                } else if score > record.score { score } else { record.score }
             }
             ScoreOperator::Latest => score,
             ScoreOperator::Sum => record.score + score,

@@ -37,6 +37,9 @@ COPY --from=builder /app/target/release/kaos-io-server /app/kaos-io-server
 # Copy web client
 COPY prototype/examples/kaos_io/web /app/web
 
+# Copy Lua scripts
+COPY prototype/examples/kaos_io/scripts /app/scripts
+
 EXPOSE 7351
 
 CMD ["/app/kaos-io-server"]

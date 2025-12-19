@@ -45,6 +45,12 @@ pub trait StorageBackend: Send + Sync {
 
     /// Count objects matching query.
     fn count(&self, collection: &str, query: Query) -> Result<u64>;
+
+    /// List all unique collection names.
+    fn list_collections(&self) -> Vec<String>;
+
+    /// List all objects in a collection (across all users).
+    fn list_all_in_collection(&self, collection: &str) -> Vec<StorageObject>;
 }
 
 /// In-memory storage backend.
@@ -61,7 +67,7 @@ impl MemoryBackend {
     }
 
     fn get_or_create_user(&self, user_id: &str) -> dashmap::mapref::one::Ref<'_, String, DashMap<String, DashMap<String, StorageObject>>> {
-        self.data.entry(user_id.to_string()).or_insert_with(DashMap::new);
+        self.data.entry(user_id.to_string()).or_default();
         self.data.get(user_id).unwrap()
     }
 
@@ -103,7 +109,7 @@ impl StorageBackend for MemoryBackend {
         expected_version: Option<u64>,
     ) -> Result<StorageObject> {
         let user_data = self.get_or_create_user(user_id);
-        user_data.entry(collection.to_string()).or_insert_with(DashMap::new);
+        user_data.entry(collection.to_string()).or_default();
         let collection_data = user_data.get(collection).unwrap();
 
         let now = Self::now_millis();
@@ -270,5 +276,30 @@ impl StorageBackend for MemoryBackend {
         }
 
         Ok(count)
+    }
+
+    fn list_collections(&self) -> Vec<String> {
+        let mut collections = std::collections::HashSet::new();
+        for user_entry in self.data.iter() {
+            for collection_entry in user_entry.value().iter() {
+                collections.insert(collection_entry.key().clone());
+            }
+        }
+        let mut result: Vec<_> = collections.into_iter().collect();
+        result.sort();
+        result
+    }
+
+    fn list_all_in_collection(&self, collection: &str) -> Vec<StorageObject> {
+        let mut results = Vec::new();
+        for user_entry in self.data.iter() {
+            if let Some(collection_data) = user_entry.value().get(collection) {
+                for obj_entry in collection_data.iter() {
+                    results.push(obj_entry.value().clone());
+                }
+            }
+        }
+        results.sort_by(|a, b| a.key.cmp(&b.key));
+        results
     }
 }

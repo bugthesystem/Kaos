@@ -235,10 +235,10 @@ impl LuaApi {
                         ..Default::default()
                     };
                     hooked.get(&ctx, &user_id, &collection, &key)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 } else {
                     services.0.storage.get(&user_id, &collection, &key)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 };
 
                 match result {
@@ -272,10 +272,10 @@ impl LuaApi {
                         ..Default::default()
                     };
                     hooked.set(&ctx, &user_id, &collection, &key, json_value)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 } else {
                     services.0.storage.set(&user_id, &collection, &key, json_value)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 };
 
                 let result = lua.create_table()?;
@@ -302,10 +302,10 @@ impl LuaApi {
                         ..Default::default()
                     };
                     hooked.delete(&ctx, &user_id, &collection, &key)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 } else {
                     services.0.storage.delete(&user_id, &collection, &key)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 };
 
                 Ok(deleted)
@@ -405,10 +405,10 @@ impl LuaApi {
                         ..Default::default()
                     };
                     hooked.submit(&ctx, &id, &user_id, &username, score, meta)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 } else {
                     services.0.leaderboards.submit(&id, &user_id, &username, score, meta)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 };
 
                 let result = lua.create_table()?;
@@ -431,10 +431,10 @@ impl LuaApi {
             let records = if let Some(ref hooked) = services.0.hooked_leaderboards {
                 let ctx = HookContext::default();
                 hooked.get_top(&ctx, &id, limit)
-                    .map_err(|e| mlua::Error::external(e))?
+                    .map_err(mlua::Error::external)?
             } else {
                 services.0.leaderboards.get_top(&id, limit)
-                    .map_err(|e| mlua::Error::external(e))?
+                    .map_err(mlua::Error::external)?
             };
 
             let result = lua.create_table()?;
@@ -521,10 +521,10 @@ impl LuaApi {
                         ..Default::default()
                     };
                     hooked.add_friend(&ctx, &user_id, &friend_id, &friend_username)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 } else {
                     services.0.social.add_friend(&user_id, &friend_id, &friend_username)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 };
 
                 let result = lua.create_table()?;
@@ -583,10 +583,10 @@ impl LuaApi {
                     ..Default::default()
                 };
                 hooked.remove_friend(&ctx, &user_id, &friend_id)
-                    .map_err(|e| mlua::Error::external(e))?;
+                    .map_err(mlua::Error::external)?;
             } else {
                 services.0.social.remove_friend(&user_id, &friend_id)
-                    .map_err(|e| mlua::Error::external(e))?;
+                    .map_err(mlua::Error::external)?;
             }
             Ok(true)
         })?;
@@ -614,10 +614,10 @@ impl LuaApi {
                         ..Default::default()
                     };
                     hooked.create_group(&ctx, &creator_id, &creator_username, name, description, open)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 } else {
                     services.0.social.create_group(&creator_id, &creator_username, name, description, open)
-                        .map_err(|e| mlua::Error::external(e))?
+                        .map_err(mlua::Error::external)?
                 };
 
                 let result = lua.create_table()?;
@@ -645,10 +645,10 @@ impl LuaApi {
                         ..Default::default()
                     };
                     hooked.join_group(&ctx, &group_id, &user_id, &username)
-                        .map_err(|e| mlua::Error::external(e))?;
+                        .map_err(mlua::Error::external)?;
                 } else {
                     services.0.social.join_group(&group_id, &user_id, &username)
-                        .map_err(|e| mlua::Error::external(e))?;
+                        .map_err(mlua::Error::external)?;
                 }
                 Ok(true)
             })?;
@@ -667,10 +667,10 @@ impl LuaApi {
                     ..Default::default()
                 };
                 hooked.leave_group(&ctx, &group_id, &user_id)
-                    .map_err(|e| mlua::Error::external(e))?;
+                    .map_err(mlua::Error::external)?;
             } else {
                 services.0.social.leave_group(&group_id, &user_id)
-                    .map_err(|e| mlua::Error::external(e))?;
+                    .map_err(mlua::Error::external)?;
             }
             Ok(true)
         })?;
@@ -780,7 +780,7 @@ impl LuaApi {
         // json.decode(string) -> table
         let decode = lua.create_function(|lua, s: String| {
             let value: serde_json::Value =
-                serde_json::from_str(&s).map_err(|e| mlua::Error::external(e))?;
+                serde_json::from_str(&s).map_err(mlua::Error::external)?;
             json_to_lua_value(lua, &value)
         })?;
         json.set("decode", decode)?;
@@ -799,7 +799,7 @@ impl Default for LuaApi {
 /// Convert Lua value to JSON string
 fn lua_value_to_json(value: &Value) -> LuaResult<String> {
     let json = lua_to_serde(value)?;
-    serde_json::to_string(&json).map_err(|e| mlua::Error::external(e))
+    serde_json::to_string(&json).map_err(mlua::Error::external)
 }
 
 /// Convert Lua value to serde_json::Value

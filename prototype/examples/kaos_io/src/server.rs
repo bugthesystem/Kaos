@@ -254,7 +254,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     // Create Lua runtime with services
-    let script_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts");
+    // Allow override via environment variable for Docker deployments
+    let script_path = std::env::var("KAOS_LUA_SCRIPTS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts"));
     let lua_config = LuaConfig {
         pool_size: 2,
         script_path: script_path.to_string_lossy().to_string(),
@@ -320,6 +323,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let console_notifications = Arc::clone(&notifications);
     let console_tournaments = Arc::clone(&tournaments);
     let console_metrics = Arc::clone(&metrics);
+    let console_script_path = script_path.to_string_lossy().to_string();
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
@@ -341,6 +345,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .matchmaker(console_matchmaker)
             .notifications(console_notifications)
             .tournaments(console_tournaments)
+            .lua_script_path(console_script_path)
             .build();
 
             if let Err(e) = console.serve().await {

@@ -37,6 +37,68 @@ fn permission_str(p: ObjectPermission) -> &'static str {
     }
 }
 
+/// GET /api/storage/collections
+pub async fn list_collections(_req: Request, ctx: Arc<ServerContext>) -> Response {
+    // Get unique collection names from storage
+    let collections = ctx.storage.list_collections();
+    Response::ok().json(&serde_json::json!({
+        "collections": collections
+    }))
+}
+
+/// GET /api/storage/objects
+pub async fn list_storage_objects(req: Request, ctx: Arc<ServerContext>) -> Response {
+    let collection = req.query_param("collection").unwrap_or("");
+    let user_id = req.query_param("user_id");
+    let page: u32 = req.query_param("page").and_then(|p| p.parse().ok()).unwrap_or(1);
+    let page_size: u32 = req.query_param("page_size").and_then(|p| p.parse().ok()).unwrap_or(20);
+
+    let objects: Vec<StorageObjectInfo> = if let Some(uid) = user_id {
+        match ctx.storage.list(uid, collection, 1000, None) {
+            Ok((items, _cursor)) => items
+                .into_iter()
+                .map(|o| StorageObjectInfo {
+                    user_id: o.user_id,
+                    collection: o.collection,
+                    key: o.key,
+                    value: o.value,
+                    version: o.version,
+                    permission: permission_str(o.permission).to_string(),
+                    created_at: o.created_at,
+                    updated_at: o.updated_at,
+                })
+                .collect(),
+            Err(_) => vec![],
+        }
+    } else {
+        // List objects from all users in this collection
+        ctx.storage.list_all_in_collection(collection)
+            .into_iter()
+            .map(|o| StorageObjectInfo {
+                user_id: o.user_id,
+                collection: o.collection,
+                key: o.key,
+                value: o.value,
+                version: o.version,
+                permission: permission_str(o.permission).to_string(),
+                created_at: o.created_at,
+                updated_at: o.updated_at,
+            })
+            .collect()
+    };
+
+    let total = objects.len() as u32;
+    let start = ((page - 1) * page_size) as usize;
+    let items: Vec<_> = objects.into_iter().skip(start).take(page_size as usize).collect();
+
+    Response::ok().json(&serde_json::json!({
+        "objects": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    }))
+}
+
 /// GET /api/storage
 pub async fn list_storage(req: Request, ctx: Arc<ServerContext>) -> Response {
     let user_id = req.query_param("user_id");

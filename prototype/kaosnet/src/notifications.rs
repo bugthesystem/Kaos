@@ -198,7 +198,7 @@ impl Notifications {
 
         // Store if persistent
         if notification.persistent {
-            let mut queue = self.storage.entry(user_id).or_insert_with(VecDeque::new);
+            let mut queue = self.storage.entry(user_id).or_default();
             queue.push_front(notification);
 
             // Trim to max size
@@ -233,7 +233,7 @@ impl Notifications {
             entry.value()(&n);
 
             if n.persistent {
-                let mut queue = self.storage.entry(entry.key().clone()).or_insert_with(VecDeque::new);
+                let mut queue = self.storage.entry(entry.key().clone()).or_default();
                 queue.push_front(n);
                 while queue.len() > self.max_per_user {
                     queue.pop_back();
