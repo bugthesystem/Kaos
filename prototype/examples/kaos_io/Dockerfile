@@ -47,8 +47,9 @@ COPY prototype/kaosnet-rs ./prototype/kaosnet-rs
 COPY prototype/examples/kaos_io ./prototype/examples/kaos_io
 COPY prototype/examples/kaos_asteroids ./prototype/examples/kaos_asteroids
 
-# Build release binaries (server + bot)
-RUN cargo build --release -p kaos-io --bin kaos-io-server --bin kaos-io-bot
+# Build release binaries (server + bot for kaos-io and asteroids)
+RUN cargo build --release -p kaos-io --bin kaos-io-server --bin kaos-io-bot \
+    && cargo build --release -p kaos-asteroids --bin asteroids-server --bin asteroids-bot
 
 # Runtime image
 FROM debian:bookworm-slim
@@ -61,9 +62,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy binaries from builder
+# Copy binaries from builder (kaos-io and asteroids)
 COPY --from=builder /app/target/release/kaos-io-server /app/kaos-io-server
 COPY --from=builder /app/target/release/kaos-io-bot /app/kaos-io-bot
+COPY --from=builder /app/target/release/asteroids-server /app/asteroids-server
+COPY --from=builder /app/target/release/asteroids-bot /app/asteroids-bot
 
 # Copy web client
 COPY prototype/examples/kaos_io/web /app/web
@@ -76,6 +79,7 @@ COPY --from=console-builder /app/console-ui/dist /app/console
 
 # Copy Lua scripts
 COPY prototype/examples/kaos_io/scripts /app/scripts
+COPY prototype/examples/kaos_asteroids/scripts /app/asteroids-scripts
 
 # Ports
 # 7350 - Console API (HTTP) + Console UI

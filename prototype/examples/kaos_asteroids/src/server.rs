@@ -220,8 +220,10 @@ fn main() -> std::io::Result<()> {
         Arc::clone(&hooked_social),
     ));
 
-    // Create Lua runtime with services
-    let script_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts");
+    // Create Lua runtime with services (use env var in Docker, fallback to cargo dir)
+    let script_path = std::env::var("KAOS_LUA_SCRIPTS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts"));
     let lua_config = LuaConfig {
         pool_size: 2,
         script_path: script_path.to_string_lossy().to_string(),
@@ -266,11 +268,18 @@ fn main() -> std::io::Result<()> {
     let console_notifications = Arc::clone(&notifications);
     let console_metrics = Arc::clone(&metrics);
 
+    // Get bind addresses from env (for Docker compatibility)
+    let console_bind = std::env::var("KAOS_CONSOLE_BIND")
+        .unwrap_or_else(|_| "127.0.0.1:7350".to_string());
+    let rudp_bind = std::env::var("KAOS_RUDP_BIND")
+        .unwrap_or_else(|_| "0.0.0.0:7354".to_string());
+
+    let console_bind_clone = console_bind.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async {
             let mut config = ConsoleConfig::default();
-            config.bind_addr = "127.0.0.1:7353".to_string(); // Different port from kaos-io
+            config.bind_addr = console_bind_clone;
 
             // Use builder to wire all services to console (including metrics)
             let console = ConsoleServer::builder(config, console_sessions, console_rooms)
@@ -289,16 +298,16 @@ fn main() -> std::io::Result<()> {
             }
         });
     });
-    println!("✓ Console API listening on http://0.0.0.0:7353 (all services + metrics wired)");
+    println!("✓ Console API listening on http://{} (all services + metrics wired)", console_bind);
 
     // Start RUDP server using kaos_rudp directly (with MessageRingBuffer per client)
-    let mut server = RudpServer::bind("0.0.0.0:7352", 256)?;
-    println!("✓ RUDP server listening on 0.0.0.0:7352");
+    let mut server = RudpServer::bind(&rudp_bind, 256)?;
+    println!("✓ RUDP server listening on {}", rudp_bind);
 
     println!();
     println!("Server Configuration:");
-    println!("  RUDP Game: udp://0.0.0.0:7352");
-    println!("  Console:   http://0.0.0.0:7353");
+    println!("  RUDP Game: udp://{}", rudp_bind);
+    println!("  Console:   http://{}", console_bind);
     println!("  Tick Rate: {}Hz", TICK_RATE);
     println!("  Lua Script: scripts/game.lua");
     println!();
@@ -330,107 +339,87 @@ fn main() -> std::io::Result<()> {
         // Poll server (receive packets, manage clients)
         server.poll();
 
-        // ==================== Accept New Connections ====================
+        // ==================== Accept New Connections (auto-join on first packet) ====================
         while let Some(addr) = server.accept() {
-            // New client connected, wait for Join message
-            pending_joins.insert(addr, format!("Player{}", next_session_id));
-        }
-
-        // Process pending joins - receive Join messages
-        let pending_addrs: Vec<SocketAddr> = pending_joins.keys().copied().collect();
-        for addr in pending_addrs {
-            let mut name = pending_joins.get(&addr).cloned().unwrap_or_default();
-            let mut got_join = false;
-
-            server.receive(&addr, |data| {
-                if let Ok(msg) = serde_json::from_slice::<ClientMessage>(data) {
-                    if let ClientMessage::Join { name: n } = msg {
-                        name = n;
-                        got_join = true;
-                    }
-                }
-            });
-
-            if got_join {
-                pending_joins.remove(&addr);
-                let session_id = next_session_id;
-                next_session_id += 1;
-
-                // Authenticate player using device ID (address as unique identifier)
-                let device_id = format!("rudp_{}", addr);
-                let auth_request = DeviceAuthRequest {
-                    device_id: device_id.clone(),
-                    create: true,
-                    username: Some(name.clone()),
-                };
-
-                let (user_id, username) = match auth.authenticate_device(&auth_request) {
-                    Ok(auth_response) => {
-                        let uid = auth_response.account.id.clone();
-                        let uname = auth_response.account.username.clone().unwrap_or(name.clone());
-                        println!("[auth] Device authenticated: {} -> {}", device_id, uid);
-                        (uid, uname)
-                    }
-                    Err(e) => {
-                        println!("[auth] Auth failed, using fallback: {}", e);
-                        let fallback = format!("ast_{}", session_id);
-                        (fallback, name.clone())
-                    }
-                };
-
-                // Execute match join hook
-                let hook_ctx = HookContext {
-                    user_id: Some(user_id.clone()),
-                    username: Some(username.clone()),
-                    session_id: Some(session_id),
-                    client_ip: Some(addr.to_string()),
-                    vars: std::collections::HashMap::new(),
-                };
-                let _ = hooks.execute_after(
-                    HookOperation::MatchJoin,
-                    &hook_ctx,
-                    &serde_json::json!({ "player_name": username }),
-                    &serde_json::json!({}),
-                );
-
-                // Join the Lua match - this triggers match_join in Lua
-                let presence = MatchPresence {
-                    user_id: user_id.clone(),
-                    session_id,
-                    username: username.clone(),
-                    node: None,
-                };
-                if let Err(e) = match_registry.join(&game_match_id, presence) {
-                    eprintln!("[!] Failed to join match: {:?}", e);
-                    continue;
-                }
-
-                // Send welcome
-                let welcome = ServerMessage::Welcome { player_id: session_id };
-                let _ = server.send(&addr, &serde_json::to_vec(&welcome).unwrap());
-
-                println!("[+] {} joined (session={}, user={}) from {}", username, session_id, user_id, addr);
-
-                // Add player to game room
-                if let Some(room) = rooms.get(&game_room_id) {
-                    let _ = room.add_player(session_id);
-                }
-
-                // Register session with KaosNet sessions service
-                let registered_id = sessions.create(addr);
-                if let Some(mut session) = sessions.get_mut(registered_id) {
-                    session.set_authenticated(user_id.clone(), Some(username.clone()));
-                    session.join_room(game_room_id.clone());
-                }
-
-                addr_to_session.insert(addr, session_id);
-                clients.insert(session_id, Client {
-                    addr,
-                    session_id,
-                    user_id,
-                    username,
-                });
+            // Skip if already in clients map
+            if clients.contains_key(&addr_to_session.get(&addr).copied().unwrap_or(0)) {
+                continue;
             }
+
+            let session_id = next_session_id;
+            next_session_id += 1;
+
+            // Create device ID from RUDP address (auto-auth like kaos-io)
+            let device_id = format!("rudp_{}", addr);
+            let name = format!("AstroPlayer{}", session_id);
+            let auth_request = DeviceAuthRequest {
+                device_id: device_id.clone(),
+                create: true,
+                username: Some(name.clone()),
+            };
+
+            let (user_id, username) = match auth.authenticate_device(&auth_request) {
+                Ok(auth_response) => {
+                    let uid = auth_response.account.id.clone();
+                    let uname = auth_response.account.username.clone().unwrap_or(name.clone());
+                    println!("[auth] Device authenticated: {} -> {}", device_id, uid);
+                    (uid, uname)
+                }
+                Err(e) => {
+                    println!("[auth] Auth failed, using fallback: {}", e);
+                    let fallback = format!("ast_{}", session_id);
+                    (fallback, name.clone())
+                }
+            };
+
+            // Execute match join hook
+            let hook_ctx = HookContext {
+                user_id: Some(user_id.clone()),
+                username: Some(username.clone()),
+                session_id: Some(session_id),
+                client_ip: Some(addr.to_string()),
+                vars: std::collections::HashMap::new(),
+            };
+            let _ = hooks.execute_after(
+                HookOperation::MatchJoin,
+                &hook_ctx,
+                &serde_json::json!({ "player_name": username }),
+                &serde_json::json!({}),
+            );
+
+            // Join the Lua match - this triggers match_join in Lua
+            let presence = MatchPresence {
+                user_id: user_id.clone(),
+                session_id,
+                username: username.clone(),
+                node: None,
+            };
+            if let Err(e) = match_registry.join(&game_match_id, presence) {
+                eprintln!("[!] Failed to join match: {:?}", e);
+                continue;
+            }
+
+            println!("[+] {} joined (session={}, user={}) from {}", username, session_id, user_id, addr);
+
+            // Add player to game room
+            if let Some(room) = rooms.get(&game_room_id) {
+                let _ = room.add_player(session_id);
+            }
+
+            // Register session with KaosNet sessions service
+            let registered_id = sessions.create(addr);
+            if let Some(mut session) = sessions.get_mut(registered_id) {
+                session.set_authenticated(user_id.clone(), Some(username.clone()));
+                session.join_room(game_room_id.clone());
+            }
+
+            addr_to_session.insert(addr, session_id);
+            clients.insert(session_id, Client {
+                addr,
+                session_id,
+                user_id,
+                username,
+            });
         }
 
         // ==================== Process Client Messages ====================

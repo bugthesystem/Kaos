@@ -665,10 +665,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let username = client.username.clone();
             let match_registry_ref = &match_registry;
             let game_match_id_ref = &game_match_id;
+            let metrics_ref = &metrics;
 
             // WebSocket receive
             if let ClientTransportType::WebSocket(ws) = &mut client.transport {
                 ws.receive(&mut |data: &[u8]| {
+                    // Track received bytes
+                    metrics_ref.bytes_received_total.inc_by(data.len() as u64);
+
                     let presence = MatchPresence {
                         user_id: user_id.clone(),
                         session_id: session_id_copy,
@@ -696,9 +700,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(client) = clients.get(&session_id) {
                 let user_id = client.user_id.clone();
                 let username = client.username.clone();
+                let metrics_ref = &metrics;
 
                 // Receive messages from this RUDP client
                 rudp_server.receive(&rudp_addr, |data| {
+                    // Track received bytes and packets
+                    metrics_ref.bytes_received_total.inc_by(data.len() as u64);
+                    metrics_ref.udp_packets_received_total.inc();
+
                     let presence = MatchPresence {
                         user_id: user_id.clone(),
                         session_id,
@@ -794,6 +803,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let ClientTransportType::WebSocket(ws) = &mut client.transport {
                     if ws.is_open() {
                         let _ = ws.send(&state_json);
+                        metrics.bytes_sent_total.inc_by(state_json.len() as u64);
                     }
                 }
             }
@@ -801,6 +811,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Broadcast to RUDP clients
             for &rudp_addr in rudp_sessions.keys() {
                 let _ = rudp_server.send(&rudp_addr, &state_json);
+                metrics.bytes_sent_total.inc_by(state_json.len() as u64);
+                metrics.udp_packets_sent_total.inc();
             }
         }
 
