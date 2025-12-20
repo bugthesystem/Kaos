@@ -399,10 +399,11 @@ export function DataTable<T extends Record<string, any>>({
 interface BadgeProps {
   variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' | 'default';
   children: ReactNode;
+  className?: string;
 }
 
-export function Badge({ variant, children }: BadgeProps) {
-  return <span className={`badge badge-${variant}`}>{children}</span>;
+export function Badge({ variant, children, className = '' }: BadgeProps) {
+  return <span className={`badge badge-${variant} ${className}`}>{children}</span>;
 }
 
 // Icons

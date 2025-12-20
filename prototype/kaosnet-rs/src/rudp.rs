@@ -270,16 +270,8 @@ impl RudpClient {
                         match msg_type {
                             MessageType::Data => {
                                 let payload = &self.recv_buffer[HEADER_SIZE..len];
-                                // Extract op code if present (first 8 bytes as i64)
-                                if payload.len() >= 8 {
-                                    let op_code = i64::from_le_bytes([
-                                        payload[0], payload[1], payload[2], payload[3],
-                                        payload[4], payload[5], payload[6], payload[7],
-                                    ]);
-                                    handler(op_code, &payload[8..]);
-                                } else {
-                                    handler(0, payload);
-                                }
+                                // Pass raw payload to handler - no op_code prefix in kaos-rudp protocol
+                                handler(0, payload);
                                 count += 1;
                             }
                             MessageType::Pong => {

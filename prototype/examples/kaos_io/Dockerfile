@@ -5,11 +5,29 @@
 # - WebSocket game transport (port 7351)
 # - RUDP game transport (port 7354/udp)
 # - Console API with auth (port 7350)
+# - Console UI (React admin dashboard)
 # - Prometheus metrics endpoint (port 9090)
 # - PostgreSQL storage
 # - Lua scripting with hooks
 
-# Build stage
+# Console UI build stage
+FROM node:20-alpine AS console-builder
+
+WORKDIR /app/console-ui
+
+# Copy package files first for better caching
+COPY prototype/console-ui/package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source files
+COPY prototype/console-ui ./
+
+# Build production bundle
+RUN npm run build
+
+# Rust build stage
 FROM rust:1.83-bookworm AS builder
 
 WORKDIR /app
@@ -38,6 +56,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -52,11 +71,14 @@ COPY prototype/examples/kaos_io/web /app/web
 # Copy SDK bundle for SDK version of web client
 COPY prototype/kaosnet-js/dist/index.global.js /app/web/kaosnet.js
 
+# Copy console UI build
+COPY --from=console-builder /app/console-ui/dist /app/console
+
 # Copy Lua scripts
 COPY prototype/examples/kaos_io/scripts /app/scripts
 
 # Ports
-# 7350 - Console API (HTTP)
+# 7350 - Console API (HTTP) + Console UI
 # 7351 - WebSocket game
 EXPOSE 7350
 EXPOSE 7351

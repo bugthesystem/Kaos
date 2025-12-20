@@ -4,12 +4,16 @@ import { DataTable, Badge, type Column } from '../components/DataTable';
 import { Drawer, Field, Section } from '../components/Drawer';
 import { usePageData } from '../hooks/usePageData';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useAuth } from '../contexts/AuthContext';
 import { formatDuration, formatTimestamp } from '../utils/formatters';
 import { PageHeader, StatCard, StatGrid, Alert } from '../components/ui';
 import { UsersIcon, ShieldIcon, ConnectionIcon, ClockIcon, RefreshIcon } from '../components/icons';
 import type { SessionInfo } from '../api/types';
 
 export function SessionsPage() {
+  const { hasPermission } = useAuth();
+  const canKick = hasPermission('kick:session');
+
   const fetchSessions = useCallback(() => api.listSessions(1, 100).then(d => d.items), []);
   const { data: sessions, loading, error, selected, drawerOpen, reload, select, closeDrawer } = usePageData({
     fetchFn: fetchSessions,
@@ -138,7 +142,7 @@ export function SessionsPage() {
         onClose={closeDrawer}
         title="Session Details"
         width="md"
-        footer={selected && (
+        footer={selected && canKick && (
           <button onClick={handleKick} className="btn btn-danger flex-1">Kick Session</button>
         )}
       >

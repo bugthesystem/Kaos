@@ -455,18 +455,29 @@ const STAT_COLORS = {
 function StatCard({ icon, value, label, trend, color, onClick }: StatCardProps) {
   const colors = STAT_COLORS[color];
   return (
-    <div className={`stat-card ${onClick ? 'cursor-pointer hover:ring-1 hover:ring-cyan-500/30' : ''}`} onClick={onClick}>
-      <div className="flex items-start justify-between w-full mb-2">
-        <div className="stat-icon" style={{ background: colors.bg, border: `1px solid ${colors.border}`, color: colors.text }}>{icon}</div>
-        {trend !== null && trend !== 0 && (
-          <span className={`text-xs font-medium flex items-center gap-0.5 ${trend > 0 ? 'text-green-500' : 'text-red-500'}`}>
-            {trend > 0 ? <TrendUpIcon className="w-3 h-3" /> : <TrendDownIcon className="w-3 h-3" />}
-            {Math.abs(trend)}%
-          </span>
-        )}
+    <div
+      className={`flex items-center gap-3 p-3 rounded-lg ${onClick ? 'cursor-pointer hover:ring-1 hover:ring-cyan-500/30' : ''}`}
+      style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
+      onClick={onClick}
+    >
+      <div
+        className="flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0"
+        style={{ background: colors.bg, border: `1px solid ${colors.border}`, color: colors.text }}
+      >
+        {icon}
       </div>
-      <span className="stat-value">{value.toLocaleString()}</span>
-      <span className="stat-label">{label}</span>
+      <div className="flex flex-col min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{value.toLocaleString()}</span>
+          {trend !== null && trend !== 0 && (
+            <span className={`text-xs font-medium flex items-center gap-0.5 ${trend > 0 ? 'text-green-500' : 'text-red-500'}`}>
+              {trend > 0 ? <TrendUpIcon className="w-3 h-3" /> : <TrendDownIcon className="w-3 h-3" />}
+              {Math.abs(trend)}%
+            </span>
+          )}
+        </div>
+        <span className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{label}</span>
+      </div>
     </div>
   );
 }

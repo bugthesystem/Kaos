@@ -4,12 +4,16 @@ import { DataTable, Badge, type Column } from '../components/DataTable';
 import { Drawer, Field, Section } from '../components/Drawer';
 import { usePageData } from '../hooks/usePageData';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useAuth } from '../contexts/AuthContext';
 import { formatTimestamp } from '../utils/formatters';
 import { PageHeader, StatCard, StatGrid, Alert } from '../components/ui';
 import { RoomsIcon, GroupIcon, PlayIcon, LockIcon, RefreshIcon } from '../components/icons';
 import type { RoomInfo, RoomPlayerInfo } from '../api/types';
 
 export function RoomsPage() {
+  const { hasPermission } = useAuth();
+  const canTerminate = hasPermission('terminate:room');
+
   const fetchRooms = useCallback(() => api.listRooms(1, 100).then(d => d.items), []);
   const { data: rooms, loading, error, selected, drawerOpen, reload, select, closeDrawer } = usePageData({
     fetchFn: fetchRooms,
@@ -144,7 +148,7 @@ export function RoomsPage() {
         onClose={closeDrawer}
         title="Room Details"
         width="md"
-        footer={selected && selected.state !== 'closed' && (
+        footer={selected && selected.state !== 'closed' && canTerminate && (
           <button onClick={handleTerminate} className="btn btn-danger flex-1">Terminate Room</button>
         )}
       >

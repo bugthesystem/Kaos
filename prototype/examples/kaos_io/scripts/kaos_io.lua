@@ -216,12 +216,13 @@ kaos.register_match("kaos_io", {
                     }
                 end
 
-                -- Submit to leaderboard if services available
-                if kaos.leaderboard_submit then
+                -- Submit to leaderboard
+                if player.score > 0 then
                     kaos.leaderboard_submit("kaos_io_highscores", player.user_id, player.name, player.score, {
                         kills = player.kills,
                         color = player.color,
                     })
+                    kaos.logger_info("Submitted score " .. player.score .. " for " .. player.name .. " to leaderboard")
                 end
 
                 state.players[player_id] = nil
@@ -383,10 +384,27 @@ kaos.register_match("kaos_io", {
             })
         end
 
+        -- Get leaderboard (every 20 ticks = 1 second to avoid overhead)
+        local leaderboard = {}
+        if tick % 20 == 0 or not state.cached_leaderboard then
+            local lb_records = kaos.leaderboard_list("kaos_io_highscores", 10) or {}
+            for _, record in ipairs(lb_records) do
+                table.insert(leaderboard, {
+                    name = record.username,
+                    score = record.score,
+                    kills = record.metadata and record.metadata.kills or 0,
+                })
+            end
+            state.cached_leaderboard = leaderboard
+        else
+            leaderboard = state.cached_leaderboard or {}
+        end
+
         -- Store broadcast state for the server to send to clients
         state.broadcast = {
             players = players_array,
             food = food_array,
+            leaderboard = leaderboard,
             world_width = WORLD_WIDTH,
             world_height = WORLD_HEIGHT,
             tick = tick,

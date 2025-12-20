@@ -1,5 +1,97 @@
 // API Response Types
 
+// =============================================================================
+// Role-Based Access Control (RBAC)
+// =============================================================================
+
+export type Role = 'admin' | 'developer' | 'viewer';
+
+export type Permission =
+  // Status & Monitoring
+  | 'view:status'
+  | 'view:metrics'
+  | 'view:config'
+  // Sessions
+  | 'view:sessions'
+  | 'kick:session'
+  // Rooms
+  | 'view:rooms'
+  | 'terminate:room'
+  // Accounts
+  | 'view:accounts'
+  | 'create:account'
+  | 'update:account'
+  | 'delete:account'
+  | 'disable:account'
+  // API Keys
+  | 'view:apikeys'
+  | 'create:apikey'
+  | 'delete:apikey'
+  // Lua/Scripting
+  | 'view:scripts'
+  | 'reload:scripts'
+  | 'execute:rpc'
+  // Storage
+  | 'view:storage'
+  | 'write:storage'
+  | 'delete:storage'
+  // Leaderboards
+  | 'view:leaderboards'
+  | 'delete:leaderboard'
+  | 'delete:leaderboard_record'
+  // Matchmaker
+  | 'view:matchmaker'
+  | 'cancel:matchmaker_ticket'
+  // Notifications
+  | 'view:notifications'
+  | 'send:notification'
+  // Chat
+  | 'view:chat'
+  | 'delete:chat_message';
+
+// Permission mappings per role
+// Admin: Full access to everything
+// Developer: Can view everything, can execute RPCs, manage some resources
+// Viewer: Read-only access to non-sensitive data
+export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
+  admin: [
+    'view:status', 'view:metrics', 'view:config',
+    'view:sessions', 'kick:session',
+    'view:rooms', 'terminate:room',
+    'view:accounts', 'create:account', 'update:account', 'delete:account', 'disable:account',
+    'view:apikeys', 'create:apikey', 'delete:apikey',
+    'view:scripts', 'reload:scripts', 'execute:rpc',
+    'view:storage', 'write:storage', 'delete:storage',
+    'view:leaderboards', 'delete:leaderboard', 'delete:leaderboard_record',
+    'view:matchmaker', 'cancel:matchmaker_ticket',
+    'view:notifications', 'send:notification',
+    'view:chat', 'delete:chat_message',
+  ],
+  developer: [
+    'view:status', 'view:metrics', 'view:config',
+    'view:sessions',
+    'view:rooms',
+    'view:accounts',
+    'view:apikeys',
+    'view:scripts', 'execute:rpc',
+    'view:storage',
+    'view:leaderboards',
+    'view:matchmaker',
+    'view:notifications',
+    'view:chat',
+  ],
+  viewer: [
+    'view:status', 'view:metrics',
+    'view:sessions',
+    'view:rooms',
+    'view:leaderboards',
+  ],
+};
+
+// =============================================================================
+// Server Types
+// =============================================================================
+
 export interface ServerStatus {
   version: string;
   uptime_secs: number;
@@ -139,4 +231,19 @@ export interface MetricsData {
   matchmaker_queue_size: number;
   matchmaker_matches_total: number;
   notifications_total: number;
+}
+
+// Audit Log types
+export interface AuditLogInfo {
+  id: string;
+  timestamp: number;
+  actor_id: string;
+  actor_name: string;
+  actor_type: 'user' | 'api_key';
+  action: string;
+  resource_type: string;
+  resource_id: string;
+  details: Record<string, unknown> | null;
+  ip_address: string | null;
+  success: boolean;
 }

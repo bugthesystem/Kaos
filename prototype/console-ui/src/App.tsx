@@ -20,6 +20,8 @@ import Storage from './pages/Storage';
 import Tournaments from './pages/Tournaments';
 import Auth from './pages/Auth';
 import ApiExplorer from './pages/ApiExplorer';
+import Roles from './pages/Roles';
+import AuditLogs from './pages/AuditLogs';
 import { MetricsPage } from './pages/Metrics';
 
 function AppContent() {
@@ -79,6 +81,10 @@ function AppContent() {
         return <ApiKeysPage />;
       case 'api-explorer':
         return <ApiExplorer />;
+      case 'roles':
+        return <Roles />;
+      case 'audit-logs':
+        return <AuditLogs />;
       case 'metrics':
         return <MetricsPage />;
       default:

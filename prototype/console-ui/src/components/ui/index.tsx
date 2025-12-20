@@ -22,6 +22,7 @@ interface StatCardProps {
   icon?: React.ReactNode;
   color?: StatColor;
   compact?: boolean;
+  subtitle?: string;
 }
 
 export function StatCard({ label, value, icon, color = 'primary', compact = true }: StatCardProps) {
@@ -173,9 +174,10 @@ export function EmptyState({ icon, title, description, action }: EmptyStateProps
 interface SpinnerProps {
   size?: 'sm' | 'md' | 'lg';
   label?: string;
+  className?: string;
 }
 
-export function Spinner({ size = 'md', label }: SpinnerProps) {
+export function Spinner({ size = 'md', label, className = '' }: SpinnerProps) {
   const sizeClasses = {
     sm: 'w-4 h-4',
     md: 'w-6 h-6',
@@ -183,7 +185,7 @@ export function Spinner({ size = 'md', label }: SpinnerProps) {
   };
 
   return (
-    <div className="flex items-center gap-3" style={{ color: 'var(--text-muted)' }}>
+    <div className={`flex items-center gap-3 ${className}`} style={{ color: 'var(--text-muted)' }}>
       <svg
         className={`animate-spin ${sizeClasses[size]}`}
         fill="none"
@@ -207,13 +209,15 @@ export function Spinner({ size = 'md', label }: SpinnerProps) {
 // =============================================================================
 
 interface PageHeaderProps {
-  title: string;
+  title: React.ReactNode;
   subtitle?: string;
   actions?: React.ReactNode;
   badge?: React.ReactNode;
+  children?: React.ReactNode;
 }
 
-export function PageHeader({ title, subtitle, actions, badge }: PageHeaderProps) {
+export function PageHeader({ title, subtitle, actions, badge, children }: PageHeaderProps) {
+  const actionContent = children || actions;
   return (
     <div className="flex items-center justify-between mb-6">
       <div>
@@ -227,7 +231,7 @@ export function PageHeader({ title, subtitle, actions, badge }: PageHeaderProps)
           </p>
         )}
       </div>
-      {actions && <div className="flex items-center gap-3">{actions}</div>}
+      {actionContent && <div className="flex items-center gap-3">{actionContent}</div>}
     </div>
   );
 }
@@ -304,11 +308,12 @@ interface AlertProps {
   title?: string;
   children: React.ReactNode;
   onDismiss?: () => void;
+  className?: string;
 }
 
-export function Alert({ variant, title, children, onDismiss }: AlertProps) {
+export function Alert({ variant, title, children, onDismiss, className = '' }: AlertProps) {
   return (
-    <div className={`alert alert-${variant} flex items-start gap-3`}>
+    <div className={`alert alert-${variant} flex items-start gap-3 ${className}`}>
       <div className="flex-1">
         {title && <p className="font-medium">{title}</p>}
         <div className="text-sm opacity-90">{children}</div>

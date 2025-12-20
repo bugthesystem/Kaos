@@ -4,7 +4,7 @@ use crate::auth::AuthService as ClientAuthService;
 use crate::chat::Chat;
 use crate::console::auth::AuthService;
 use crate::console::handlers;
-use crate::console::storage::{AccountStore, ApiKeyStore};
+use crate::console::storage::{AccountStore, ApiKeyStore, AuditLogStorage};
 use crate::leaderboard::Leaderboards;
 use crate::matchmaker::Matchmaker;
 #[cfg(feature = "metrics")]
@@ -97,6 +97,8 @@ pub struct ServerContext {
     pub notifications: Arc<Notifications>,
     // Lua script path (optional)
     pub lua_script_path: Option<String>,
+    // Audit logs
+    pub audit_logs: Arc<AuditLogStorage>,
     // Metrics (optional)
     #[cfg(feature = "metrics")]
     pub metrics: Option<Arc<Metrics>>,
@@ -208,6 +210,7 @@ impl ConsoleServerBuilder {
     pub fn build(self) -> ConsoleServer {
         let accounts = Arc::new(AccountStore::new());
         let api_keys = Arc::new(ApiKeyStore::new());
+        let audit_logs = Arc::new(AuditLogStorage::new());
 
         // Create default admin account if none exists
         if accounts.list().is_empty() {
@@ -255,6 +258,7 @@ impl ConsoleServerBuilder {
             matchmaker: self.matchmaker.unwrap_or_else(|| Arc::new(Matchmaker::new())),
             notifications: self.notifications.unwrap_or_else(|| Arc::new(Notifications::new())),
             lua_script_path: self.lua_script_path,
+            audit_logs,
             #[cfg(feature = "metrics")]
             metrics: self.metrics,
         });
@@ -941,6 +945,22 @@ impl ConsoleServer {
                 move |req| {
                     let ctx = Arc::clone(&ctx);
                     async move { handlers::reload_scripts(req, ctx).await }
+                }
+            })
+
+            // Audit log routes
+            .get("/api/audit-logs", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::list_audit_logs(req, ctx).await }
+                }
+            })
+            .get("/api/audit-logs/:id", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_audit_log(req, ctx).await }
                 }
             })
     }

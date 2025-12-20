@@ -360,3 +360,57 @@ pub struct MetricsData {
     pub matchmaker_matches_total: i64,
     pub notifications_total: i64,
 }
+
+// =============================================================================
+// Audit Logs
+// =============================================================================
+
+/// Audit log entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditLogEntry {
+    pub id: Uuid,
+    pub timestamp: i64,
+    pub actor_id: Uuid,
+    pub actor_name: String,
+    pub actor_type: String,  // "user" or "api_key"
+    pub action: String,      // e.g., "kick_session", "create_account", "delete_api_key"
+    pub resource_type: String, // e.g., "session", "account", "api_key", "room"
+    pub resource_id: String,
+    pub details: Option<String>,  // JSON-serialized additional details
+    pub ip_address: Option<String>,
+    pub success: bool,
+}
+
+/// Audit log info for API responses.
+#[derive(Debug, Serialize)]
+pub struct AuditLogInfo {
+    pub id: Uuid,
+    pub timestamp: i64,
+    pub actor_id: Uuid,
+    pub actor_name: String,
+    pub actor_type: String,
+    pub action: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub details: Option<serde_json::Value>,
+    pub ip_address: Option<String>,
+    pub success: bool,
+}
+
+impl From<&AuditLogEntry> for AuditLogInfo {
+    fn from(entry: &AuditLogEntry) -> Self {
+        Self {
+            id: entry.id,
+            timestamp: entry.timestamp,
+            actor_id: entry.actor_id,
+            actor_name: entry.actor_name.clone(),
+            actor_type: entry.actor_type.clone(),
+            action: entry.action.clone(),
+            resource_type: entry.resource_type.clone(),
+            resource_id: entry.resource_id.clone(),
+            details: entry.details.as_ref().and_then(|d| serde_json::from_str(d).ok()),
+            ip_address: entry.ip_address.clone(),
+            success: entry.success,
+        }
+    }
+}

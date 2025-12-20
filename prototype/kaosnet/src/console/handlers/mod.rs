@@ -16,6 +16,7 @@ mod tournaments;
 mod matchmaker;
 mod notifications;
 mod lua;
+mod audit_logs;
 
 pub use auth::*;
 pub use client_auth::*;
@@ -33,3 +34,4 @@ pub use tournaments::*;
 pub use matchmaker::*;
 pub use notifications::*;
 pub use lua::*;
+pub use audit_logs::*;

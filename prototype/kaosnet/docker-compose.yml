@@ -42,6 +42,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7350/api/status"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     restart: unless-stopped
     networks:
       - kaosnet
@@ -92,6 +98,12 @@ services:
       - VITE_API_URL=${VITE_API_URL:-http://localhost:7350}
     depends_on:
       - kaos-io
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
     restart: unless-stopped
     networks:
       - kaosnet
@@ -103,7 +115,15 @@ services:
       dockerfile: prototype/examples/kaos_io/Dockerfile
     command: ["/app/kaos-io-bot", "DockerBot", "kaos-io", "7350", "7354"]
     depends_on:
-      - kaos-io
+      kaos-io:
+        condition: service_healthy
+    # Bot is a client, not a server - check if process is running
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x kaos-io-bot || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     restart: unless-stopped
     networks:
       - kaosnet

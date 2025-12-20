@@ -365,6 +365,9 @@ export function EyeIcon({ className, style }: IconProps) {
   );
 }
 
+// Alias for semantic usage
+export const ViewIcon = EyeIcon;
+
 export function EyeOffIcon({ className, style }: IconProps) {
   return (
     <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
