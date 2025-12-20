@@ -3,8 +3,10 @@
 //! This module provides a `BitmapWindow` for managing the receive window,
 //! handling out-of-order packet arrival efficiently using a bitmap-based approach.
 
-/// Max packet size (2KB > typical MTU 1500, with headroom for headers)
-const MAX_PACKET_SIZE: usize = 2048;
+/// Max packet size (64KB to support large game state payloads)
+/// Note: For memory efficiency with many slots, consider dynamic allocation
+/// if your use case typically has smaller packets.
+const MAX_PACKET_SIZE: usize = 65536;
 
 #[repr(C, align(128))]
 #[derive(Clone, Copy)]
@@ -411,9 +413,9 @@ mod tests {
         win.insert(5, &[5]);
 
         // First, deliver packets 0-3 (which should be empty since we didn't insert them)
-        let mut delivered = Vec::new();
+        let mut delivered: Vec<u8> = Vec::new();
         win.deliver_in_order_with(|msg| delivered.push(msg[0]));
-        assert_eq!(delivered, vec![]);
+        assert_eq!(delivered, Vec::<u8>::new());
 
         // Now advance the window by inserting and delivering packets 0-3
         for i in 0..4 {
@@ -425,13 +427,13 @@ mod tests {
         assert_eq!(delivered2, vec![0, 1, 2, 3, 4, 5]);
 
         // No more packets should be delivered
-        let mut delivered3 = Vec::new();
+        let mut delivered3: Vec<u8> = Vec::new();
         win.deliver_in_order_with(|msg| delivered3.push(msg[0]));
-        assert_eq!(delivered3, vec![]);
+        assert_eq!(delivered3, Vec::<u8>::new());
 
         // Far-future packets (100, 101) should not be delivered
-        let mut delivered4 = Vec::new();
+        let mut delivered4: Vec<u8> = Vec::new();
         win.deliver_in_order_with(|msg| delivered4.push(msg[0]));
-        assert_eq!(delivered4, vec![]);
+        assert_eq!(delivered4, Vec::<u8>::new());
     }
 }
