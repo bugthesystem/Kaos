@@ -120,3 +120,23 @@ export interface CreateApiKeyResponse {
   scopes: string[];
   expires_at: number | null;
 }
+
+// Metrics types - matches backend MetricsData struct
+export interface MetricsData {
+  uptime_seconds: number;
+  sessions_active: number;
+  sessions_total: number;
+  sessions_by_state: Record<string, number>;
+  rooms_active: number;
+  rooms_total: number;
+  websocket_connections: number;
+  bytes_received_total: number;
+  bytes_sent_total: number;
+  udp_packets_received_total: number;
+  udp_packets_sent_total: number;
+  chat_messages_total: number;
+  leaderboard_submissions_total: number;
+  matchmaker_queue_size: number;
+  matchmaker_matches_total: number;
+  notifications_total: number;
+}

@@ -458,6 +458,9 @@ fn game_loop() -> std::io::Result<()> {
 
 ### Recently Completed
 
+- **Matchmaker notifications** - Match found notifications sent to all players when matches are created
+- **PostgreSQL storage** - Default storage backend for both example games (kaos_io, kaos_asteroids)
+- **Metrics integration** - HookedStorage, HookedLeaderboards, HookedSocial all record metrics
 - **Rust SDK reconnection** - `ReconnectConfig` with exponential backoff, auto-reconnect
 - **Console Chat page** - Send messages, create channels, view messages
 - **Console Social page** - Groups CRUD (create, list, delete), Friends listing

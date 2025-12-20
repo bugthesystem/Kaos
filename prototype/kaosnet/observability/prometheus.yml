@@ -1,0 +1,24 @@
+# Prometheus configuration for KaosNet
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers: []
+
+rule_files: []
+
+scrape_configs:
+  # KaosNet game server metrics
+  - job_name: 'kaosnet'
+    static_configs:
+      - targets: ['kaos-io:7350']
+    metrics_path: '/metrics'
+    scheme: 'http'
+    scrape_interval: 5s
+    scrape_timeout: 5s
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

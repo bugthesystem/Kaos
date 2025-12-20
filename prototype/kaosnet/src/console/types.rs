@@ -339,3 +339,24 @@ pub struct PaginatedList<T> {
     pub page: u32,
     pub page_size: u32,
 }
+
+/// Metrics data for Console UI.
+#[derive(Debug, Serialize)]
+pub struct MetricsData {
+    pub uptime_seconds: i64,
+    pub sessions_active: i64,
+    pub sessions_total: i64,
+    pub sessions_by_state: std::collections::HashMap<String, i64>,
+    pub rooms_active: i64,
+    pub rooms_total: i64,
+    pub websocket_connections: i64,
+    pub bytes_received_total: i64,
+    pub bytes_sent_total: i64,
+    pub udp_packets_received_total: i64,
+    pub udp_packets_sent_total: i64,
+    pub chat_messages_total: i64,
+    pub leaderboard_submissions_total: i64,
+    pub matchmaker_queue_size: i64,
+    pub matchmaker_matches_total: i64,
+    pub notifications_total: i64,
+}

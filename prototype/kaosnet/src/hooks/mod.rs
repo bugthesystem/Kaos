@@ -72,6 +72,7 @@ pub enum HookOperation {
     // Matchmaker
     MatchmakerAdd,
     MatchmakerRemove,
+    MatchmakerMatch,
 
     // Social
     FriendAdd,
@@ -113,6 +114,7 @@ impl HookOperation {
             HookOperation::LeaderboardRead => "leaderboard_read",
             HookOperation::MatchmakerAdd => "matchmaker_add",
             HookOperation::MatchmakerRemove => "matchmaker_remove",
+            HookOperation::MatchmakerMatch => "matchmaker_match",
             HookOperation::FriendAdd => "friend_add",
             HookOperation::FriendRemove => "friend_remove",
             HookOperation::FriendBlock => "friend_block",
@@ -144,6 +146,7 @@ impl HookOperation {
             "leaderboard_read" => Some(HookOperation::LeaderboardRead),
             "matchmaker_add" => Some(HookOperation::MatchmakerAdd),
             "matchmaker_remove" => Some(HookOperation::MatchmakerRemove),
+            "matchmaker_match" => Some(HookOperation::MatchmakerMatch),
             "friend_add" => Some(HookOperation::FriendAdd),
             "friend_remove" => Some(HookOperation::FriendRemove),
             "friend_block" => Some(HookOperation::FriendBlock),

@@ -10,6 +10,9 @@ use std::sync::Arc;
 
 use crate::hooks::{HookContext, HookError, HookExecutor, HookOperation, HookRegistry};
 use crate::leaderboard::{LeaderboardError, LeaderboardRecord, Leaderboards};
+use crate::matchmaker::{
+    Matchmaker, MatchmakerConfig, MatchmakerError, MatchmakerMatch, MatchmakerTicket, QueueStats,
+};
 use crate::notifications::Notifications;
 use crate::social::{Friend, Group, GroupMember, Social, SocialError};
 use crate::storage::{Storage, StorageError, StorageObject};
@@ -31,6 +34,9 @@ pub enum ServiceError {
 
     #[error("social error: {0}")]
     Social(#[from] SocialError),
+
+    #[error("matchmaker error: {0}")]
+    Matchmaker(#[from] MatchmakerError),
 }
 
 pub type Result<T> = std::result::Result<T, ServiceError>;
@@ -599,6 +605,223 @@ impl HookedSocial {
     }
 }
 
+/// Matchmaker service with hook, metrics, and notification integration.
+pub struct HookedMatchmaker {
+    matchmaker: Arc<Matchmaker>,
+    hooks: HookExecutor,
+    notifications: Option<Arc<Notifications>>,
+    #[cfg(feature = "metrics")]
+    metrics: Option<Arc<Metrics>>,
+}
+
+impl HookedMatchmaker {
+    pub fn new(matchmaker: Arc<Matchmaker>, hook_registry: Arc<HookRegistry>) -> Self {
+        Self {
+            matchmaker,
+            hooks: HookExecutor::new(hook_registry),
+            notifications: None,
+            #[cfg(feature = "metrics")]
+            metrics: None,
+        }
+    }
+
+    /// Enable notifications for matchmaker events.
+    pub fn with_notifications(mut self, notifications: Arc<Notifications>) -> Self {
+        self.notifications = Some(notifications);
+        self
+    }
+
+    /// Enable metrics recording.
+    #[cfg(feature = "metrics")]
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    #[cfg(feature = "metrics")]
+    fn update_queue_metrics(&self) {
+        if let Some(ref m) = self.metrics {
+            let queues = self.matchmaker.list_queues();
+            let total_players: usize = queues.iter().map(|q| q.players).sum();
+            m.matchmaker_queue_size.set(total_players as i64);
+        }
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    fn update_queue_metrics(&self) {}
+
+    /// Register a queue configuration.
+    pub fn register_queue(&self, config: MatchmakerConfig) {
+        self.matchmaker.register_queue(config);
+    }
+
+    /// Add a ticket to matchmaking with hooks.
+    pub fn add(&self, ctx: &HookContext, ticket: MatchmakerTicket) -> Result<String> {
+        // Build payload for hooks
+        let payload = serde_json::json!({
+            "ticket_id": ticket.id,
+            "queue": ticket.queue,
+            "players": ticket.players.iter().map(|p| serde_json::json!({
+                "user_id": p.user_id,
+                "session_id": p.session_id,
+                "username": p.username,
+                "skill": p.skill,
+            })).collect::<Vec<_>>(),
+            "properties": ticket.properties,
+        });
+
+        // Execute before hooks (can reject)
+        let _payload = self.hooks.before(HookOperation::MatchmakerAdd, ctx, payload)?;
+
+        // Execute actual operation
+        let ticket_id = self.matchmaker.add(ticket)?;
+
+        // Update metrics
+        self.update_queue_metrics();
+
+        // Execute after hooks
+        let result_json = serde_json::json!({
+            "ticket_id": ticket_id,
+        });
+        self.hooks.after(HookOperation::MatchmakerAdd, ctx, &_payload, &result_json);
+
+        Ok(ticket_id)
+    }
+
+    /// Remove a ticket from matchmaking with hooks.
+    pub fn remove(&self, ctx: &HookContext, ticket_id: &str) -> Result<MatchmakerTicket> {
+        // Build payload for hooks
+        let payload = serde_json::json!({
+            "ticket_id": ticket_id,
+        });
+
+        // Execute before hooks (can reject)
+        let payload = self.hooks.before(HookOperation::MatchmakerRemove, ctx, payload)?;
+
+        let ticket_id = payload["ticket_id"].as_str().unwrap_or(ticket_id);
+
+        // Execute actual operation
+        let ticket = self.matchmaker.remove(ticket_id)?;
+
+        // Update metrics
+        self.update_queue_metrics();
+
+        // Execute after hooks
+        let result_json = serde_json::json!({
+            "ticket_id": ticket.id,
+            "queue": ticket.queue,
+        });
+        self.hooks.after(HookOperation::MatchmakerRemove, ctx, &payload, &result_json);
+
+        Ok(ticket)
+    }
+
+    /// Remove a player's ticket with hooks.
+    pub fn remove_player(&self, ctx: &HookContext, user_id: &str) -> Result<MatchmakerTicket> {
+        let payload = serde_json::json!({
+            "user_id": user_id,
+        });
+
+        let payload = self.hooks.before(HookOperation::MatchmakerRemove, ctx, payload)?;
+
+        let user_id = payload["user_id"].as_str().unwrap_or(user_id);
+
+        let ticket = self.matchmaker.remove_player(user_id)?;
+
+        self.update_queue_metrics();
+
+        let result_json = serde_json::json!({
+            "ticket_id": ticket.id,
+            "queue": ticket.queue,
+        });
+        self.hooks.after(HookOperation::MatchmakerRemove, ctx, &payload, &result_json);
+
+        Ok(ticket)
+    }
+
+    /// Check if a player is queued.
+    pub fn is_queued(&self, user_id: &str) -> bool {
+        self.matchmaker.is_queued(user_id)
+    }
+
+    /// Get a player's ticket.
+    pub fn get_ticket(&self, user_id: &str) -> Option<MatchmakerTicket> {
+        self.matchmaker.get_ticket(user_id)
+    }
+
+    /// Process matchmaking for all queues.
+    /// Executes hooks and sends notifications for each match.
+    pub fn tick(&self, ctx: &HookContext) -> Vec<MatchmakerMatch> {
+        let matches = self.matchmaker.tick();
+
+        // Record metrics
+        #[cfg(feature = "metrics")]
+        if let Some(ref m) = self.metrics {
+            for _ in &matches {
+                m.matchmaker_matches_total.inc();
+            }
+        }
+
+        // Execute hooks and send notifications for each match
+        for mm_match in &matches {
+            let payload = serde_json::json!({
+                "match_id": mm_match.id,
+                "queue": mm_match.queue,
+                "players": mm_match.players.iter().map(|p| serde_json::json!({
+                    "user_id": p.user_id,
+                    "session_id": p.session_id,
+                    "username": p.username,
+                    "skill": p.skill,
+                })).collect::<Vec<_>>(),
+                "properties": mm_match.properties,
+            });
+
+            // Execute after hook for match created
+            self.hooks.after(HookOperation::MatchmakerMatch, ctx, &payload, &payload);
+
+            // Send notifications to all players
+            if let Some(ref notifications) = self.notifications {
+                for player in &mm_match.players {
+                    let _ = notifications.notify_match_found(&player.user_id, &mm_match.id, &mm_match.queue);
+                }
+            }
+        }
+
+        // Update queue size metrics after processing
+        self.update_queue_metrics();
+
+        matches
+    }
+
+    /// Get pending matches (and clear them).
+    pub fn drain_matches(&self) -> Vec<MatchmakerMatch> {
+        self.matchmaker.drain_matches()
+    }
+
+    /// Register a match handler callback.
+    pub fn on_match<F>(&self, handler: F)
+    where
+        F: Fn(&MatchmakerMatch) + Send + Sync + 'static,
+    {
+        self.matchmaker.on_match(handler);
+    }
+
+    /// Get queue stats.
+    pub fn stats(&self, queue: &str) -> Option<QueueStats> {
+        self.matchmaker.stats(queue)
+    }
+
+    /// List all registered queues with their stats.
+    pub fn list_queues(&self) -> Vec<QueueStats> {
+        self.matchmaker.list_queues()
+    }
+
+    /// Get underlying matchmaker (for operations that don't need hooks).
+    pub fn inner(&self) -> &Arc<Matchmaker> {
+        &self.matchmaker
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -797,5 +1020,98 @@ mod tests {
         let result = hooked.add_friend(&ctx, "alice", "bob", "Bob");
 
         assert!(matches!(result, Err(ServiceError::Hook(HookError::Rejected(_)))));
+    }
+
+    #[test]
+    fn test_hooked_matchmaker_add_ticket() {
+        let matchmaker = Arc::new(Matchmaker::new());
+        let registry = Arc::new(HookRegistry::new());
+
+        matchmaker.register_queue(MatchmakerConfig {
+            queue: "ranked".into(),
+            min_players: 2,
+            max_players: 2,
+            initial_skill_range: 100.0,
+            ..Default::default()
+        });
+
+        let hooked = HookedMatchmaker::new(matchmaker, registry);
+
+        let ctx = HookContext::default();
+        let ticket = crate::matchmaker::create_ticket("ranked", "user1", 1, "Alice", 1500.0);
+
+        let ticket_id = hooked.add(&ctx, ticket).unwrap();
+        assert!(!ticket_id.is_empty());
+        assert!(hooked.is_queued("user1"));
+    }
+
+    #[test]
+    fn test_hooked_matchmaker_reject_add() {
+        let matchmaker = Arc::new(Matchmaker::new());
+        let registry = Arc::new(HookRegistry::new());
+
+        matchmaker.register_queue(MatchmakerConfig {
+            queue: "ranked".into(),
+            min_players: 2,
+            max_players: 2,
+            ..Default::default()
+        });
+
+        // Block all matchmaker adds
+        struct BlockMatchmaking;
+        impl BeforeHook for BlockMatchmaking {
+            fn execute(
+                &self,
+                _ctx: &HookContext,
+                _payload: serde_json::Value,
+            ) -> crate::hooks::Result<BeforeHookResult> {
+                Ok(BeforeHookResult::Reject("Matchmaking disabled".to_string()))
+            }
+        }
+
+        registry.register_before(HookOperation::MatchmakerAdd, BlockMatchmaking);
+
+        let hooked = HookedMatchmaker::new(matchmaker, registry);
+
+        let ctx = HookContext::default();
+        let ticket = crate::matchmaker::create_ticket("ranked", "user1", 1, "Alice", 1500.0);
+
+        let result = hooked.add(&ctx, ticket);
+        assert!(matches!(result, Err(ServiceError::Hook(HookError::Rejected(_)))));
+    }
+
+    #[test]
+    fn test_hooked_matchmaker_tick() {
+        let matchmaker = Arc::new(Matchmaker::new());
+        let registry = Arc::new(HookRegistry::new());
+
+        matchmaker.register_queue(MatchmakerConfig {
+            queue: "ranked".into(),
+            min_players: 2,
+            max_players: 2,
+            initial_skill_range: 100.0,
+            ..Default::default()
+        });
+
+        let hooked = HookedMatchmaker::new(matchmaker, registry);
+
+        let ctx = HookContext::default();
+
+        // Add two players
+        let ticket1 = crate::matchmaker::create_ticket("ranked", "user1", 1, "Alice", 1500.0);
+        let ticket2 = crate::matchmaker::create_ticket("ranked", "user2", 2, "Bob", 1550.0);
+
+        hooked.add(&ctx, ticket1).unwrap();
+        hooked.add(&ctx, ticket2).unwrap();
+
+        // Process matchmaking
+        let matches = hooked.tick(&ctx);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].players.len(), 2);
+
+        // Players should no longer be queued
+        assert!(!hooked.is_queued("user1"));
+        assert!(!hooked.is_queued("user2"));
     }
 }

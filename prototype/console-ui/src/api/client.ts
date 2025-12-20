@@ -13,6 +13,7 @@ import type {
   CreateAccountRequest,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
+  MetricsData,
 } from './types';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:7350';
@@ -92,6 +93,11 @@ class ApiClient {
 
   async getConfig(): Promise<Record<string, unknown>> {
     return this.request('GET', '/api/config');
+  }
+
+  // Metrics
+  async getMetrics(): Promise<MetricsData> {
+    return this.request('GET', '/api/metrics');
   }
 
   // Sessions

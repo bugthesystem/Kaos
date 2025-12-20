@@ -98,7 +98,7 @@ pub use hooks::{
 
 // Re-exports - Hooked Services
 pub use services::{
-    HookedStorage, HookedLeaderboards, HookedSocial,
+    HookedStorage, HookedLeaderboards, HookedSocial, HookedMatchmaker,
     ServiceError,
 };
 

@@ -420,6 +420,13 @@ impl ConsoleServer {
                     async move { handlers::get_config(req, ctx).await }
                 }
             })
+            .get("/api/metrics", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_metrics(req, ctx).await }
+                }
+            })
 
             // Session routes
             .get("/api/sessions", {

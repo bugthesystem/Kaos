@@ -406,10 +406,11 @@ mod tests {
         let bytes = header.to_bytes();
         let parsed = PacketHeader::from_bytes(&bytes).unwrap();
 
-        assert_eq!(parsed.version, 1);
-        assert_eq!(parsed.msg_type, MessageType::Data as u8);
-        assert_eq!(parsed.sequence, 42);
-        assert_eq!(parsed.payload_len, 100);
+        // Use block expressions to copy packed fields to avoid unaligned references
+        assert_eq!({ parsed.version }, 1);
+        assert_eq!({ parsed.msg_type }, MessageType::Data as u8);
+        assert_eq!({ parsed.sequence }, 42);
+        assert_eq!({ parsed.payload_len }, 100);
     }
 
     #[test]

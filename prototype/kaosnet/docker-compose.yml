@@ -11,6 +11,8 @@
 #   - web:      Static web client (http://localhost:8080)
 #   - postgres: Database (localhost:5432)
 #   - console:  Admin UI (http://localhost:3000)
+#   - prometheus: Metrics collection (http://localhost:9090)
+#   - grafana: Metrics dashboard (http://localhost:3001)
 #
 # Security:
 #   - Set KAOS_JWT_SECRET to a secure random value (min 32 chars)
@@ -108,8 +110,54 @@ services:
     profiles:
       - bot  # Only start when explicitly requested: docker compose --profile bot up
 
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - kaos-io
+    restart: unless-stopped
+    networks:
+      - kaosnet
+    profiles:
+      - observability  # Start with: docker compose --profile observability up
+
+  # Grafana - Metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - kaosnet
+    profiles:
+      - observability  # Start with: docker compose --profile observability up
+
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
   kaosnet:

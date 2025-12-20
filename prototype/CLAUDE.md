@@ -320,10 +320,11 @@ Ports:
 
 ## What's Left
 
-- [ ] Wire PostgreSQL to sync Storage (async backend exists in postgres.rs)
-- [ ] Integrate metrics into services (counters exist, not called)
-- [ ] Notifications triggered by events
+- [x] Wire PostgreSQL to sync Storage (default for kaos_io + kaos_asteroids)
+- [x] Integrate metrics into services (HookedStorage, HookedLeaderboards, HookedSocial)
+- [x] Notifications triggered by events (friend requests, matchmaker matches)
 - [ ] Cluster mode / horizontal scaling
+- [ ] Quick Start guide + examples
 
 ## Key APIs
 
@@ -670,6 +671,10 @@ Shared functions in `console/utils.rs`:
 30. WsTransport peer address support:
     - `WsTransport::from_server_socket` now accepts peer address
     - `peer_addr()` method returns client address for server connections
+31. Matchmaker notifications:
+    - Match found notifications sent to all players when matchmaker creates a match
+    - Both kaos_io and kaos_asteroids now register `on_match` callbacks
+    - Uses `notify_match_found(user_id, match_id, queue)` from Notifications service
 
 ## KaosNet Standalone (prototype/kaosnet/)
 

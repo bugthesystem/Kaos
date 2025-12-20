@@ -203,6 +203,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let social = Arc::new(Social::new());
     let tournaments = Arc::new(Tournaments::new());
 
+    // Register matchmaker callback to send notifications when matches are found
+    {
+        let notifs = Arc::clone(&notifications);
+        matchmaker.on_match(move |mm_match| {
+            for player in &mm_match.players {
+                let _ = notifs.notify_match_found(&player.user_id, &mm_match.id, &mm_match.queue);
+            }
+        });
+    }
+    println!("✓ Matchmaker notifications enabled");
+
     // Initialize Authentication service with secret key
     let auth = Arc::new(AuthService::new("kaos-io-game-secret-key"));
     println!("✓ Auth service initialized (device/email auth with JWT)");

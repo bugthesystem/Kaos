@@ -3,9 +3,11 @@
 #
 # Features:
 # - WebSocket game transport (port 7351)
+# - RUDP game transport (port 7354/udp)
 # - Console API with auth (port 7350)
+# - Prometheus metrics endpoint (port 9090)
 # - PostgreSQL storage
-# - Lua scripting
+# - Lua scripting with hooks
 
 # Build stage
 FROM rust:1.83-bookworm AS builder

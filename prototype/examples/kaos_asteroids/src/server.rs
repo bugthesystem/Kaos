@@ -155,6 +155,16 @@ fn main() -> std::io::Result<()> {
     let social = Arc::new(Social::new());
     let tournaments = Arc::new(Tournaments::new());
 
+    // Register matchmaker callback to send notifications when matches are found
+    {
+        let notifs = Arc::clone(&notifications);
+        matchmaker.on_match(move |mm_match| {
+            for player in &mm_match.players {
+                let _ = notifs.notify_match_found(&player.user_id, &mm_match.id, &mm_match.queue);
+            }
+        });
+    }
+
     // Initialize Authentication service
     let auth = Arc::new(AuthService::new("kaos-asteroids-secret-key"));
     println!("✓ Authentication service initialized");
