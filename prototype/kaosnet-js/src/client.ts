@@ -6,6 +6,7 @@ import type {
   ClientOptions,
   Session,
   AuthResponse,
+  Account,
   DeviceAuthRequest,
   EmailAuthRequest,
   CustomAuthRequest,
@@ -201,6 +202,47 @@ export class KaosClient {
    */
   isSessionExpired(session: Session): boolean {
     return Date.now() / 1000 >= session.expiresAt;
+  }
+
+  // ============================================================================
+  // Account Management
+  // ============================================================================
+
+  /**
+   * Get the authenticated user's account info.
+   */
+  async getAccount(session: Session): Promise<Account> {
+    return this.request<Account>('GET', '/api/account', undefined, session);
+  }
+
+  /**
+   * Link a device ID to the authenticated account.
+   * Allows logging in with multiple devices.
+   */
+  async linkDevice(session: Session, deviceId: string): Promise<void> {
+    await this.request<{ success: boolean }>('POST', '/api/account/link/device', {
+      device_id: deviceId,
+    }, session);
+  }
+
+  /**
+   * Link email/password to the authenticated account.
+   * Allows the user to log in with email after initial device auth.
+   */
+  async linkEmail(session: Session, email: string, password: string): Promise<void> {
+    await this.request<{ success: boolean }>('POST', '/api/account/link/email', {
+      email,
+      password,
+    }, session);
+  }
+
+  /**
+   * Unlink a device from the authenticated account.
+   */
+  async unlinkDevice(session: Session, deviceId: string): Promise<void> {
+    await this.request<{ success: boolean }>('POST', '/api/account/unlink/device', {
+      device_id: deviceId,
+    }, session);
   }
 
   // ============================================================================

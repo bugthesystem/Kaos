@@ -205,6 +205,36 @@ impl Chat {
         channel
     }
 
+    /// Create a channel with specified type.
+    pub fn create_channel(&self, name: &str, channel_type: ChannelType, room_id: Option<&str>, group_id: Option<&str>) -> Result<Channel, ChatError> {
+        let id = match channel_type {
+            ChannelType::Room => format!("room:{}", room_id.unwrap_or(&uuid::Uuid::new_v4().to_string())),
+            ChannelType::Group => format!("group:{}", group_id.unwrap_or(&uuid::Uuid::new_v4().to_string())),
+            ChannelType::DirectMessage => return Err(ChatError::ChannelNotFound("Cannot create DM with create_channel".to_string())),
+        };
+
+        let channel = Channel {
+            id: id.clone(),
+            name: name.to_string(),
+            channel_type,
+            room_id: room_id.map(String::from),
+            group_id: group_id.map(String::from),
+            dm_users: None,
+            metadata: None,
+            created_at: now_millis(),
+        };
+
+        let data = ChannelData {
+            channel: channel.clone(),
+            members: HashSet::new(),
+            messages: VecDeque::new(),
+            max_messages: self.max_history,
+        };
+
+        self.channels.insert(id, data);
+        Ok(channel)
+    }
+
     /// Create a group channel.
     pub fn create_group(&self, group_id: &str, name: &str) -> Channel {
         let channel = Channel {

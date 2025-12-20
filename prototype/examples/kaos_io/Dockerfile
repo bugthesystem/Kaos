@@ -23,11 +23,12 @@ COPY kaos-archive ./kaos-archive
 COPY prototype/kaos-ws ./prototype/kaos-ws
 COPY prototype/kaos-http ./prototype/kaos-http
 COPY prototype/kaosnet ./prototype/kaosnet
+COPY prototype/kaosnet-rs ./prototype/kaosnet-rs
 COPY prototype/examples/kaos_io ./prototype/examples/kaos_io
 COPY prototype/examples/kaos_asteroids ./prototype/examples/kaos_asteroids
 
-# Build release binary with all features
-RUN cargo build --release -p kaos-io --bin kaos-io-server
+# Build release binaries (server + bot)
+RUN cargo build --release -p kaos-io --bin kaos-io-server --bin kaos-io-bot
 
 # Runtime image
 FROM debian:bookworm-slim
@@ -39,11 +40,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy binary from builder
+# Copy binaries from builder
 COPY --from=builder /app/target/release/kaos-io-server /app/kaos-io-server
+COPY --from=builder /app/target/release/kaos-io-bot /app/kaos-io-bot
 
 # Copy web client
 COPY prototype/examples/kaos_io/web /app/web
+
+# Copy SDK bundle for SDK version of web client
+COPY prototype/kaosnet-js/dist/index.global.js /app/web/kaosnet.js
 
 # Copy Lua scripts
 COPY prototype/examples/kaos_io/scripts /app/scripts

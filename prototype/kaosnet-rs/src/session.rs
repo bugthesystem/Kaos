@@ -22,14 +22,14 @@ pub struct Session {
 
 impl Session {
     /// Create a session from authentication response data.
-    pub fn from_data(data: SessionData) -> Self {
+    pub fn from_data(data: SessionData, new_account: bool) -> Self {
         Self {
             token: data.token,
             refresh_token: data.refresh_token,
             user_id: data.user_id,
             username: data.username,
             expires_at: data.expires_at,
-            created: data.created,
+            created: new_account,
         }
     }
 

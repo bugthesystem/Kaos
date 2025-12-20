@@ -174,9 +174,7 @@ pub async fn get_group(req: Request, ctx: Arc<ServerContext>) -> Response {
         })),
     };
 
-    // Search for group by ID - use search_groups with empty query and find by ID
-    let groups = ctx.social.search_groups("", 10000);
-    match groups.into_iter().find(|g| g.id == id) {
+    match ctx.social.get_group(id) {
         Some(g) => {
             let member_count = ctx.social.get_group_members(&g.id)
                 .map(|m| m.len())
@@ -273,8 +271,7 @@ pub async fn create_group(req: Request, ctx: Arc<ServerContext>) -> Response {
 }
 
 /// DELETE /api/social/groups/:id
-/// Note: Group deletion is not implemented in the Social service
-pub async fn delete_group(req: Request, _ctx: Arc<ServerContext>) -> Response {
+pub async fn delete_group(req: Request, ctx: Arc<ServerContext>) -> Response {
     if let Some(identity) = req.ext::<Identity>() {
         if !identity.has_permission(Permission::ManageSocial) {
             return Response::forbidden().json(&serde_json::json!({
@@ -287,16 +284,20 @@ pub async fn delete_group(req: Request, _ctx: Arc<ServerContext>) -> Response {
         }));
     }
 
-    let _id = match req.param("id") {
+    let id = match req.param("id") {
         Some(id) => id,
         None => return Response::bad_request().json(&serde_json::json!({
             "error": "missing group id"
         })),
     };
 
-    // Group deletion is not implemented in the Social service
-    // In a real implementation, you'd add a delete_group method
-    Response::internal_error().json(&serde_json::json!({
-        "error": "group deletion not implemented"
-    }))
+    match ctx.social.delete_group(id) {
+        Ok(_) => Response::ok().json(&serde_json::json!({
+            "success": true,
+            "message": "group deleted"
+        })),
+        Err(e) => Response::not_found().json(&serde_json::json!({
+            "error": e.to_string()
+        })),
+    }
 }

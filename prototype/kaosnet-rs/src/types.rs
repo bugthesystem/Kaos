@@ -11,6 +11,9 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthResponse {
     pub session: SessionData,
+    /// Whether this is a newly created account.
+    #[serde(default)]
+    pub new_account: bool,
 }
 
 /// Session data from authentication.
@@ -21,7 +24,37 @@ pub struct SessionData {
     pub user_id: String,
     pub username: Option<String>,
     pub expires_at: i64,
-    pub created: bool,
+    /// Time when the session was created (Unix timestamp).
+    #[serde(default)]
+    pub created_at: i64,
+}
+
+/// User account information.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Account {
+    pub id: String,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub email: Option<String>,
+    pub devices: Vec<DeviceInfo>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub disabled: bool,
+}
+
+/// Device linked to an account.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceInfo {
+    pub device_id: String,
+    pub linked_at: i64,
+}
+
+/// Response from link/unlink operations.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LinkResponse {
+    pub success: bool,
 }
 
 // ============================================================================

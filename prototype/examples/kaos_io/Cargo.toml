@@ -24,6 +24,7 @@ postgres = ["kaosnet/postgres"]
 
 [dependencies]
 kaosnet = { path = "../../kaosnet", features = ["lua", "console", "metrics", "auth"] }
+kaosnet-rs = { path = "../../kaosnet-rs" }
 kaos-rudp = { path = "../../../kaos-rudp" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

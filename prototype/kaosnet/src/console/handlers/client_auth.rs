@@ -3,8 +3,9 @@
 //! These endpoints are for game clients (SDK), separate from console admin auth.
 
 use crate::auth::{
-    AuthService as ClientAuthService, DeviceAuthRequest, EmailAuthRequest, CustomAuthRequest,
-    AuthResponse, AuthError,
+    DeviceAuthRequest, EmailAuthRequest, CustomAuthRequest,
+    LinkDeviceRequest, LinkEmailRequest,
+    AuthResponse, AuthError, AccountId,
 };
 use crate::console::server::ServerContext;
 use kaos_http::{Request, Response, StatusCode};
@@ -199,6 +200,140 @@ pub async fn refresh_token(req: Request, ctx: Arc<ServerContext>) -> Response {
 
     match ctx.client_auth.refresh_token(&body.refresh_token) {
         Ok(response) => Response::ok().json(&SessionResponse::from(response)),
+        Err(e) => auth_error_response(e),
+    }
+}
+
+// ============================================================================
+// Account Linking
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct LinkDeviceApiRequest {
+    pub device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinkEmailApiRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnlinkDeviceApiRequest {
+    pub device_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LinkResponse {
+    pub success: bool,
+}
+
+/// Helper to extract user ID from Authorization header.
+fn extract_user_id(req: &Request, ctx: &Arc<ServerContext>) -> Result<AccountId, Response> {
+    let auth_header = req.header("authorization")
+        .ok_or_else(|| Response::unauthorized().json(&serde_json::json!({
+            "error": "Missing authorization header",
+            "code": "UNAUTHORIZED",
+        })))?;
+
+    let token = auth_header.strip_prefix("Bearer ")
+        .ok_or_else(|| Response::unauthorized().json(&serde_json::json!({
+            "error": "Invalid authorization format",
+            "code": "INVALID_TOKEN",
+        })))?;
+
+    ctx.client_auth.validate_token(token)
+        .map(|claims| AccountId::from(claims.sub))
+        .map_err(|e| auth_error_response(e))
+}
+
+/// POST /api/account/link/device
+/// Link a device ID to the authenticated account.
+pub async fn link_device(req: Request, ctx: Arc<ServerContext>) -> Response {
+    let account_id = match extract_user_id(&req, &ctx) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    let body: LinkDeviceApiRequest = match req.json() {
+        Ok(b) => b,
+        Err(e) => return Response::bad_request().json(&serde_json::json!({
+            "error": format!("Invalid request: {}", e),
+            "code": "INVALID_REQUEST",
+        })),
+    };
+
+    let link_req = LinkDeviceRequest {
+        device_id: body.device_id,
+    };
+
+    match ctx.client_auth.link_device(&account_id, &link_req) {
+        Ok(()) => Response::ok().json(&LinkResponse { success: true }),
+        Err(e) => auth_error_response(e),
+    }
+}
+
+/// POST /api/account/link/email
+/// Link an email/password to the authenticated account.
+pub async fn link_email(req: Request, ctx: Arc<ServerContext>) -> Response {
+    let account_id = match extract_user_id(&req, &ctx) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    let body: LinkEmailApiRequest = match req.json() {
+        Ok(b) => b,
+        Err(e) => return Response::bad_request().json(&serde_json::json!({
+            "error": format!("Invalid request: {}", e),
+            "code": "INVALID_REQUEST",
+        })),
+    };
+
+    let link_req = LinkEmailRequest {
+        email: body.email,
+        password: body.password,
+    };
+
+    match ctx.client_auth.link_email(&account_id, &link_req) {
+        Ok(()) => Response::ok().json(&LinkResponse { success: true }),
+        Err(e) => auth_error_response(e),
+    }
+}
+
+/// POST /api/account/unlink/device
+/// Unlink a device ID from the authenticated account.
+pub async fn unlink_device(req: Request, ctx: Arc<ServerContext>) -> Response {
+    let account_id = match extract_user_id(&req, &ctx) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    let body: UnlinkDeviceApiRequest = match req.json() {
+        Ok(b) => b,
+        Err(e) => return Response::bad_request().json(&serde_json::json!({
+            "error": format!("Invalid request: {}", e),
+            "code": "INVALID_REQUEST",
+        })),
+    };
+
+    match ctx.client_auth.unlink_device(&account_id, &body.device_id) {
+        Ok(()) => Response::ok().json(&LinkResponse { success: true }),
+        Err(e) => auth_error_response(e),
+    }
+}
+
+/// GET /api/account
+/// Get the authenticated user's account info.
+pub async fn get_my_account(req: Request, ctx: Arc<ServerContext>) -> Response {
+    let account_id = match extract_user_id(&req, &ctx) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    match ctx.client_auth.get_account(&account_id) {
+        Ok(Some(account)) => Response::ok().json(&account),
+        Ok(None) => auth_error_response(AuthError::AccountNotFound),
         Err(e) => auth_error_response(e),
     }
 }

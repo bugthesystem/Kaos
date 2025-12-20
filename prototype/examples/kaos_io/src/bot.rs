@@ -1,18 +1,21 @@
 //! Kaos.io RUDP Bot Client
 //!
-//! An AI-controlled bot that connects via RUDP transport to demonstrate
-//! KaosNet's dual-transport capability (WebSocket + RUDP).
+//! An AI-controlled bot that uses the KaosNet Rust SDK:
+//! 1. Authenticates via HTTP API using device auth
+//! 2. Connects via RUDP transport for low-latency game state
 //!
-//! The server auto-authenticates RUDP clients on first packet, so the bot
-//! just needs to send movement commands and receive game state.
+//! This demonstrates the full SDK flow for native game clients.
 //!
 //! Usage:
-//!   cargo run -p kaos-io --bin kaos-io-bot [bot_name] [server_addr]
+//!   cargo run -p kaos-io --bin kaos-io-bot [bot_name] [api_host] [api_port] [rudp_port]
+//!
+//! Docker usage:
+//!   The bot connects to kaos-io:7350 for auth and kaos-io:7354 for RUDP
 
-use kaos_rudp::{RudpTransport, Transport};
+use kaosnet_rs::{KaosClient, RudpClient};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 const WORLD_WIDTH: f32 = 2000.0;
@@ -25,6 +28,7 @@ const WORLD_HEIGHT: f32 = 2000.0;
 struct MoveInput {
     target_x: f32,
     target_y: f32,
+    name: String,
 }
 
 /// Server -> Client game state (matches Lua broadcast format)
@@ -68,7 +72,8 @@ struct LeaderboardEntry {
 
 struct Bot {
     name: String,
-    transport: RudpTransport,
+    rudp: RudpClient,
+    user_id: String,
 
     // Position (updated from server state)
     my_x: f32,
@@ -93,16 +98,13 @@ struct Bot {
 }
 
 impl Bot {
-    fn new(name: &str, server_addr: SocketAddr) -> std::io::Result<Self> {
+    fn new(name: &str, user_id: &str, rudp: RudpClient) -> Self {
         let mut rng = rand::thread_rng();
 
-        // Bind to random local port
-        let local_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
-        let transport = RudpTransport::new(local_addr, server_addr, 256)?;
-
-        Ok(Self {
+        Self {
             name: name.to_string(),
-            transport,
+            rudp,
+            user_id: user_id.to_string(),
             my_x: rng.gen_range(100.0..WORLD_WIDTH - 100.0),
             my_y: rng.gen_range(100.0..WORLD_HEIGHT - 100.0),
             my_mass: 400.0,
@@ -116,7 +118,7 @@ impl Bot {
             bytes_received: 0,
             last_stats_print: Instant::now(),
             connected: false,
-        })
+        }
     }
 
     fn send_movement(&mut self) {
@@ -124,10 +126,11 @@ impl Bot {
         let input = MoveInput {
             target_x: self.target_x,
             target_y: self.target_y,
+            name: self.name.clone(),
         };
         if let Ok(json) = serde_json::to_vec(&input) {
-            // Ignore send errors (congestion window full is normal during high traffic)
-            if self.transport.send(&json).is_ok() {
+            // Use SDK's RUDP client to send
+            if self.rudp.send_raw(&json).is_ok() {
                 self.messages_sent += 1;
             }
         }
@@ -147,8 +150,8 @@ impl Bot {
     }
 
     fn process_messages(&mut self) {
-        // Use kaos-rudp Transport trait for reliable delivery
-        self.transport.receive(|data| {
+        // Use SDK's RUDP receive
+        self.rudp.receive(|_op_code, data| {
             self.bytes_received += data.len() as u64;
             self.messages_received += 1;
 
@@ -166,7 +169,7 @@ impl Bot {
                         if player.name.starts_with("RudpPlayer") || player.name == self.name {
                             self.my_x = player.x;
                             self.my_y = player.y;
-                            self.my_mass = player.radius; // Server sends radius, not mass
+                            self.my_mass = player.radius;
                             self.my_score = player.score;
                             break;
                         }
@@ -190,9 +193,9 @@ impl Bot {
     }
 
     fn run(&mut self) {
-        println!("[{}] Starting RUDP bot", self.name);
-        println!("[{}] Local:  {:?}", self.name, self.transport.socket().local_addr());
-        println!("[{}] Server: {:?}", self.name, self.transport.remote_addr());
+        println!("[{}] Starting RUDP bot (user_id: {})", self.name, self.user_id);
+        println!("[{}] Local:  {:?}", self.name, self.rudp.local_addr());
+        println!("[{}] Server: {:?}", self.name, self.rudp.server_addr());
         println!("[{}] Sending initial packet to register with server...", self.name);
 
         // Send initial packet to trigger server-side client creation
@@ -228,26 +231,56 @@ impl Bot {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
     let bot_name = args.get(1)
         .map(|s| s.as_str())
         .unwrap_or("RudpBot");
 
-    let server_addr: SocketAddr = args.get(2)
+    // API host for authentication (default: localhost for local dev, kaos-io for Docker)
+    let api_host = args.get(2)
         .map(|s| s.as_str())
-        .unwrap_or("127.0.0.1:7354")
-        .parse()?;
+        .unwrap_or("127.0.0.1");
+
+    let api_port: u16 = args.get(3)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(7350);
+
+    let rudp_port: u16 = args.get(4)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(7354);
 
     println!(r#"
     ╔═══════════════════════════════════════════════════════════════╗
-    ║   RUDP Bot - KaosNet Dual Transport Demo                      ║
-    ║   Connects via RUDP while web clients use WebSocket           ║
+    ║   KaosNet SDK Bot - RUDP Transport Demo                       ║
+    ║   Uses SDK for auth, then RUDP for low-latency game state     ║
     ╚═══════════════════════════════════════════════════════════════╝
     "#);
 
-    let mut bot = Bot::new(bot_name, server_addr)?;
+    // Step 1: Authenticate using KaosNet SDK
+    println!("[{}] Authenticating via SDK ({}:{})...", bot_name, api_host, api_port);
+    let client = KaosClient::new(api_host, api_port);
+
+    let device_id = format!("bot-{}-{}", bot_name, std::process::id());
+    let session = client.authenticate_device(&device_id).await?;
+
+    println!("[{}] Authenticated! user_id={}", bot_name, session.user_id);
+    println!("[{}] Token: {}...", bot_name, &session.token[..20.min(session.token.len())]);
+
+    // Step 2: Connect via RUDP for game state
+    // Resolve hostname to SocketAddr (needed for Docker service names like "kaos-io")
+    let rudp_addr: SocketAddr = format!("{}:{}", api_host, rudp_port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or("Failed to resolve RUDP address")?;
+    println!("[{}] Connecting RUDP to {}...", bot_name, rudp_addr);
+
+    let rudp = RudpClient::connect(rudp_addr)?;
+
+    // Step 3: Run the bot
+    let mut bot = Bot::new(bot_name, &session.user_id, rudp);
     bot.run();
 
     Ok(())

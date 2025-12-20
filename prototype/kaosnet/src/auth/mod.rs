@@ -457,6 +457,29 @@ impl AuthService {
         Ok(())
     }
 
+    /// Unlink a device from an account.
+    pub fn unlink_device(&self, account_id: &AccountId, device_id: &str) -> Result<()> {
+        let mut account = self.accounts.get(account_id)?
+            .ok_or(AuthError::AccountNotFound)?;
+
+        let original_len = account.devices.len();
+        account.devices.retain(|d| d.device_id != device_id);
+
+        if account.devices.len() == original_len {
+            // Device wasn't linked to this account
+            return Err(AuthError::AccountNotFound);
+        }
+
+        account.updated_at = unix_timestamp();
+        self.accounts.update(&account)?;
+        Ok(())
+    }
+
+    /// Validate token and return claims (alias for verify_token).
+    pub fn validate_token(&self, token: &str) -> Result<ClientClaims> {
+        self.verify_token(token)
+    }
+
     // ==================== Account Management ====================
 
     /// Update account profile.

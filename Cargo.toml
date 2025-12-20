@@ -9,6 +9,7 @@ members = [
     "prototype/kaos-ws",
     "prototype/kaos-http",
     "prototype/kaosnet",
+    "prototype/kaosnet-rs",
     "prototype/examples/kaos_io",
     "prototype/examples/kaos_asteroids"
 ]

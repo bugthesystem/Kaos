@@ -38,6 +38,12 @@ export default function Chat() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [newMessage, setNewMessage] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [newChannelType, setNewChannelType] = useState<'room' | 'group'>('room');
+  const [creatingChannel, setCreatingChannel] = useState(false);
 
   useEffect(() => {
     loadChannels();
@@ -92,6 +98,47 @@ export default function Chat() {
       loadChannels();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to delete channel');
+    }
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedChannel || !newMessage.trim()) return;
+
+    setSendingMessage(true);
+    try {
+      await api.post(`/api/chat/channels/${selectedChannel.id}/send`, {
+        content: newMessage.trim(),
+        code: 100, // System message code
+      });
+      setNewMessage('');
+      // Reload messages to show the new one
+      await loadMessages(selectedChannel.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to send message');
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+
+  const handleCreateChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newChannelName.trim()) return;
+
+    setCreatingChannel(true);
+    try {
+      await api.post('/api/chat/channels', {
+        name: newChannelName.trim(),
+        channel_type: newChannelType,
+      });
+      setNewChannelName('');
+      setNewChannelType('room');
+      setShowCreateModal(false);
+      await loadChannels();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to create channel');
+    } finally {
+      setCreatingChannel(false);
     }
   };
 
@@ -184,10 +231,70 @@ export default function Chat() {
             Channels and messages
           </p>
         </div>
-        <button onClick={loadChannels} className="btn btn-secondary">
-          Refresh
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowCreateModal(true)} className="btn btn-primary">
+            + Create Channel
+          </button>
+          <button onClick={loadChannels} className="btn btn-secondary">
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Create Channel Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="card p-6 w-full max-w-md" style={{ background: 'var(--bg-secondary)' }}>
+            <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
+              Create Channel
+            </h2>
+            <form onSubmit={handleCreateChannel} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                  Channel Name
+                </label>
+                <input
+                  type="text"
+                  value={newChannelName}
+                  onChange={(e) => setNewChannelName(e.target.value)}
+                  placeholder="e.g., general, lobby, announcements"
+                  className="input w-full"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                  Channel Type
+                </label>
+                <select
+                  value={newChannelType}
+                  onChange={(e) => setNewChannelType(e.target.value as 'room' | 'group')}
+                  className="input w-full"
+                >
+                  <option value="room">Room (Public chat room)</option>
+                  <option value="group">Group (Private group chat)</option>
+                </select>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={creatingChannel || !newChannelName.trim()}
+                >
+                  {creatingChannel ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="alert alert-danger">
@@ -319,6 +426,29 @@ export default function Chat() {
               </Field>
             </Section>
 
+            <Section title="Send System Message">
+              <form onSubmit={handleSendMessage} className="flex gap-2">
+                <input
+                  type="text"
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  placeholder="Type a system message..."
+                  className="input flex-1"
+                  disabled={sendingMessage}
+                />
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={sendingMessage || !newMessage.trim()}
+                >
+                  {sendingMessage ? 'Sending...' : 'Send'}
+                </button>
+              </form>
+              <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+                Messages sent from the console appear as system messages
+              </p>
+            </Section>
+
             <Section title="Recent Messages">
               {messages.length > 0 ? (
                 <div className="space-y-3 max-h-80 overflow-y-auto">
@@ -329,7 +459,7 @@ export default function Chat() {
                       style={{ background: 'var(--bg-tertiary)' }}
                     >
                       <div className="flex items-baseline gap-2 mb-1">
-                        <span className="font-semibold" style={{ color: 'var(--color-accent)' }}>
+                        <span className="font-semibold" style={{ color: msg.sender_username === 'System' ? 'var(--color-warning)' : 'var(--color-accent)' }}>
                           {msg.sender_username}
                         </span>
                         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>

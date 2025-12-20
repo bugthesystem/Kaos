@@ -20,6 +20,31 @@ pub type NotificationHandler = Box<dyn Fn(Notification) + Send + Sync>;
 pub type StatusPresenceHandler = Box<dyn Fn(StatusPresenceEvent) + Send + Sync>;
 pub type ErrorHandler = Box<dyn Fn(Error) + Send + Sync>;
 pub type DisconnectHandler = Box<dyn Fn() + Send + Sync>;
+pub type ReconnectHandler = Box<dyn Fn(u32) + Send + Sync>;
+
+/// Socket reconnection configuration.
+#[derive(Debug, Clone)]
+pub struct ReconnectConfig {
+    /// Maximum number of reconnection attempts (0 = disabled, -1 = infinite)
+    pub max_attempts: i32,
+    /// Initial delay between reconnection attempts in milliseconds.
+    pub initial_delay_ms: u64,
+    /// Maximum delay between reconnection attempts in milliseconds.
+    pub max_delay_ms: u64,
+    /// Multiplier for exponential backoff (e.g., 2.0 doubles delay each attempt).
+    pub backoff_multiplier: f64,
+}
+
+impl Default for ReconnectConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 5,
+            initial_delay_ms: 1000,
+            max_delay_ms: 30000,
+            backoff_multiplier: 2.0,
+        }
+    }
+}
 
 /// Match presence event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +224,223 @@ struct ServerError {
 type ResponseSender = oneshot::Sender<std::result::Result<EnvelopeMessage, Error>>;
 type PendingRequests = Arc<Mutex<HashMap<String, ResponseSender>>>;
 
+// Type alias for WebSocket read stream
+type WsReadStream = futures_util::stream::SplitStream<
+    tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>
+    >
+>;
+
+/// Spawns a read loop task that processes incoming WebSocket messages.
+/// This is extracted as a separate function to allow reuse after reconnection.
+#[allow(clippy::too_many_arguments)]
+fn spawn_read_loop(
+    mut read: WsReadStream,
+    pending: PendingRequests,
+    connected: Arc<RwLock<bool>>,
+    on_chat_message: Arc<RwLock<Option<ChatMessageHandler>>>,
+    on_match_data: Arc<RwLock<Option<MatchDataHandler>>>,
+    on_match_presence: Arc<RwLock<Option<MatchPresenceHandler>>>,
+    on_matchmaker_matched: Arc<RwLock<Option<MatchmakerMatchedHandler>>>,
+    on_notification: Arc<RwLock<Option<NotificationHandler>>>,
+    on_status_presence: Arc<RwLock<Option<StatusPresenceHandler>>>,
+    on_error: Arc<RwLock<Option<ErrorHandler>>>,
+    on_disconnect: Arc<RwLock<Option<DisconnectHandler>>>,
+    on_reconnect: Arc<RwLock<Option<ReconnectHandler>>>,
+    reconnect_config: Arc<RwLock<ReconnectConfig>>,
+    reconnect_attempts: Arc<RwLock<u32>>,
+    stored_token: Arc<RwLock<Option<String>>>,
+    reconnecting: Arc<RwLock<bool>>,
+    sender_ref: Arc<Mutex<Option<mpsc::Sender<WsMessage>>>>,
+    base_url: String,
+) {
+    tokio::spawn(async move {
+        while let Some(msg) = read.next().await {
+            match msg {
+                Ok(WsMessage::Text(text)) => {
+                    if let Ok(envelope) = serde_json::from_str::<Envelope>(&text) {
+                        // Check if this is a response to a pending request
+                        if let Some(cid) = &envelope.cid {
+                            let mut pending = pending.lock().await;
+                            if let Some(sender) = pending.remove(cid) {
+                                let _ = sender.send(Ok(envelope.message));
+                                continue;
+                            }
+                        }
+
+                        // Handle event
+                        match envelope.message {
+                            EnvelopeMessage::ChannelMessage(msg) => {
+                                if let Some(handler) = on_chat_message.read().await.as_ref() {
+                                    handler(msg);
+                                }
+                            }
+                            EnvelopeMessage::MatchData(data) => {
+                                if let Some(handler) = on_match_data.read().await.as_ref() {
+                                    handler(data);
+                                }
+                            }
+                            EnvelopeMessage::MatchPresenceEvent(event) => {
+                                if let Some(handler) = on_match_presence.read().await.as_ref() {
+                                    handler(event);
+                                }
+                            }
+                            EnvelopeMessage::MatchmakerMatched(matched) => {
+                                if let Some(handler) = on_matchmaker_matched.read().await.as_ref() {
+                                    handler(matched);
+                                }
+                            }
+                            EnvelopeMessage::StatusPresenceEvent(event) => {
+                                if let Some(handler) = on_status_presence.read().await.as_ref() {
+                                    handler(event);
+                                }
+                            }
+                            EnvelopeMessage::Notifications(list) => {
+                                if let Some(handler) = on_notification.read().await.as_ref() {
+                                    for n in list.notifications {
+                                        handler(n);
+                                    }
+                                }
+                            }
+                            EnvelopeMessage::Error(err) => {
+                                if let Some(handler) = on_error.read().await.as_ref() {
+                                    handler(Error::server_code(&err.message, err.code));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(WsMessage::Close(_)) => break,
+                Err(_) => break,
+                _ => {}
+            }
+        }
+
+        // Mark as disconnected
+        {
+            let mut c = connected.write().await;
+            *c = false;
+        }
+
+        // Attempt reconnection
+        let config = reconnect_config.read().await.clone();
+        let token_opt = stored_token.read().await.clone();
+
+        if config.max_attempts != 0 {
+            if let Some(token) = token_opt {
+                // Check if already reconnecting
+                {
+                    let is_reconnecting = *reconnecting.read().await;
+                    if is_reconnecting {
+                        return;
+                    }
+                    let mut r = reconnecting.write().await;
+                    *r = true;
+                }
+
+                let mut delay_ms = config.initial_delay_ms;
+
+                loop {
+                    let current_attempt = {
+                        let mut attempts = reconnect_attempts.write().await;
+                        *attempts += 1;
+                        *attempts
+                    };
+
+                    if config.max_attempts > 0 && current_attempt as i32 > config.max_attempts {
+                        break;
+                    }
+
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+
+                    let url = format!("{}/ws?token={}", base_url, token);
+                    match connect_async(&url).await {
+                        Ok((ws_stream, _)) => {
+                            let (write, new_read) = ws_stream.split();
+
+                            let (tx, mut new_rx) = mpsc::channel::<WsMessage>(100);
+
+                            {
+                                let mut sender = sender_ref.lock().await;
+                                *sender = Some(tx);
+                            }
+
+                            {
+                                let mut c = connected.write().await;
+                                *c = true;
+                            }
+
+                            {
+                                let mut attempts = reconnect_attempts.write().await;
+                                *attempts = 0;
+                            }
+
+                            {
+                                let mut r = reconnecting.write().await;
+                                *r = false;
+                            }
+
+                            if let Some(handler) = on_reconnect.read().await.as_ref() {
+                                handler(current_attempt);
+                            }
+
+                            let write = Arc::new(Mutex::new(write));
+                            let write_clone = write.clone();
+                            tokio::spawn(async move {
+                                while let Some(msg) = new_rx.recv().await {
+                                    let mut w = write_clone.lock().await;
+                                    if w.send(msg).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+
+                            // Recursive call to spawn new read loop
+                            spawn_read_loop(
+                                new_read,
+                                pending,
+                                connected,
+                                on_chat_message,
+                                on_match_data,
+                                on_match_presence,
+                                on_matchmaker_matched,
+                                on_notification,
+                                on_status_presence,
+                                on_error,
+                                on_disconnect,
+                                on_reconnect,
+                                reconnect_config,
+                                reconnect_attempts,
+                                stored_token,
+                                reconnecting,
+                                sender_ref,
+                                base_url,
+                            );
+
+                            return;
+                        }
+                        Err(_) => {
+                            delay_ms = ((delay_ms as f64) * config.backoff_multiplier) as u64;
+                            delay_ms = delay_ms.min(config.max_delay_ms);
+                        }
+                    }
+                }
+
+                {
+                    let mut r = reconnecting.write().await;
+                    *r = false;
+                }
+            }
+        }
+
+        // Call disconnect handler
+        if let Some(handler) = on_disconnect.read().await.as_ref() {
+            handler();
+        }
+    });
+}
+
 /// WebSocket client for real-time communication.
 ///
 /// # Example
@@ -231,6 +473,12 @@ pub struct KaosSocket {
     cid_counter: AtomicU64,
     connected: Arc<RwLock<bool>>,
 
+    // Reconnection state
+    reconnect_config: Arc<RwLock<ReconnectConfig>>,
+    reconnect_attempts: Arc<RwLock<u32>>,
+    stored_token: Arc<RwLock<Option<String>>>,
+    reconnecting: Arc<RwLock<bool>>,
+
     // Event handlers
     on_chat_message: Arc<RwLock<Option<ChatMessageHandler>>>,
     on_match_data: Arc<RwLock<Option<MatchDataHandler>>>,
@@ -240,6 +488,7 @@ pub struct KaosSocket {
     on_status_presence: Arc<RwLock<Option<StatusPresenceHandler>>>,
     on_error: Arc<RwLock<Option<ErrorHandler>>>,
     on_disconnect: Arc<RwLock<Option<DisconnectHandler>>>,
+    on_reconnect: Arc<RwLock<Option<ReconnectHandler>>>,
 }
 
 impl KaosSocket {
@@ -251,6 +500,10 @@ impl KaosSocket {
             pending: Arc::new(Mutex::new(HashMap::new())),
             cid_counter: AtomicU64::new(1),
             connected: Arc::new(RwLock::new(false)),
+            reconnect_config: Arc::new(RwLock::new(ReconnectConfig::default())),
+            reconnect_attempts: Arc::new(RwLock::new(0)),
+            stored_token: Arc::new(RwLock::new(None)),
+            reconnecting: Arc::new(RwLock::new(false)),
             on_chat_message: Arc::new(RwLock::new(None)),
             on_match_data: Arc::new(RwLock::new(None)),
             on_match_presence: Arc::new(RwLock::new(None)),
@@ -259,12 +512,42 @@ impl KaosSocket {
             on_status_presence: Arc::new(RwLock::new(None)),
             on_error: Arc::new(RwLock::new(None)),
             on_disconnect: Arc::new(RwLock::new(None)),
+            on_reconnect: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Configure reconnection behavior.
+    pub async fn set_reconnect_config(&self, config: ReconnectConfig) {
+        let mut cfg = self.reconnect_config.write().await;
+        *cfg = config;
+    }
+
+    /// Disable automatic reconnection.
+    pub async fn disable_reconnect(&self) {
+        let mut cfg = self.reconnect_config.write().await;
+        cfg.max_attempts = 0;
     }
 
     /// Connect to the server.
     pub async fn connect(&self, session: &Session) -> Result<()> {
-        let url = format!("{}/ws?token={}", self.base_url, session.token);
+        // Store token for potential reconnection
+        {
+            let mut token = self.stored_token.write().await;
+            *token = Some(session.token.clone());
+        }
+
+        // Reset reconnect attempts on fresh connect
+        {
+            let mut attempts = self.reconnect_attempts.write().await;
+            *attempts = 0;
+        }
+
+        self.connect_internal(&session.token).await
+    }
+
+    /// Internal connection logic (used for both initial connect and reconnect).
+    async fn connect_internal(&self, token: &str) -> Result<()> {
+        let url = format!("{}/ws?token={}", self.base_url, token);
 
         let (ws_stream, _) = connect_async(&url).await?;
         let (write, mut read) = ws_stream.split();
@@ -296,7 +579,7 @@ impl KaosSocket {
             }
         });
 
-        // Spawn read task
+        // Spawn read task with reconnection logic
         let pending = self.pending.clone();
         let connected = self.connected.clone();
         let on_chat_message = self.on_chat_message.clone();
@@ -307,6 +590,15 @@ impl KaosSocket {
         let on_status_presence = self.on_status_presence.clone();
         let on_error = self.on_error.clone();
         let on_disconnect = self.on_disconnect.clone();
+        let on_reconnect = self.on_reconnect.clone();
+
+        // Reconnection state
+        let reconnect_config = self.reconnect_config.clone();
+        let reconnect_attempts = self.reconnect_attempts.clone();
+        let stored_token = self.stored_token.clone();
+        let reconnecting = self.reconnecting.clone();
+        let sender_ref = self.sender.clone();
+        let base_url = self.base_url.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = read.next().await {
@@ -377,7 +669,150 @@ impl KaosSocket {
                 *c = false;
             }
 
-            // Call disconnect handler
+            // Attempt reconnection
+            let config = reconnect_config.read().await.clone();
+            let token_opt = stored_token.read().await.clone();
+
+            if config.max_attempts != 0 {
+                if let Some(token) = token_opt {
+                    // Check if already reconnecting (prevent multiple reconnection loops)
+                    {
+                        let is_reconnecting = *reconnecting.read().await;
+                        if is_reconnecting {
+                            return;
+                        }
+                        let mut r = reconnecting.write().await;
+                        *r = true;
+                    }
+
+                    let mut delay_ms = config.initial_delay_ms;
+
+                    loop {
+                        let current_attempt = {
+                            let mut attempts = reconnect_attempts.write().await;
+                            *attempts += 1;
+                            *attempts
+                        };
+
+                        // Check max attempts (-1 = infinite)
+                        if config.max_attempts > 0 && current_attempt as i32 > config.max_attempts {
+                            break;
+                        }
+
+                        // Wait before attempting reconnection
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+
+                        // Attempt to reconnect
+                        let url = format!("{}/ws?token={}", base_url, token);
+                        match connect_async(&url).await {
+                            Ok((ws_stream, _)) => {
+                                let (write, new_read) = ws_stream.split();
+
+                                // Create new channel for sending
+                                let (tx, mut new_rx) = mpsc::channel::<WsMessage>(100);
+
+                                // Update sender
+                                {
+                                    let mut sender = sender_ref.lock().await;
+                                    *sender = Some(tx);
+                                }
+
+                                // Mark as connected
+                                {
+                                    let mut c = connected.write().await;
+                                    *c = true;
+                                }
+
+                                // Reset reconnect attempts
+                                {
+                                    let mut attempts = reconnect_attempts.write().await;
+                                    *attempts = 0;
+                                }
+
+                                // Mark as no longer reconnecting
+                                {
+                                    let mut r = reconnecting.write().await;
+                                    *r = false;
+                                }
+
+                                // Call reconnect handler
+                                if let Some(handler) = on_reconnect.read().await.as_ref() {
+                                    handler(current_attempt);
+                                }
+
+                                // Spawn new write task
+                                let write = Arc::new(Mutex::new(write));
+                                let write_clone = write.clone();
+                                tokio::spawn(async move {
+                                    while let Some(msg) = new_rx.recv().await {
+                                        let mut w = write_clone.lock().await;
+                                        if w.send(msg).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                });
+
+                                // Continue reading on new stream (recursive-like behavior)
+                                // We need to spawn a new read loop here
+                                let pending = pending.clone();
+                                let connected = connected.clone();
+                                let on_chat_message = on_chat_message.clone();
+                                let on_match_data = on_match_data.clone();
+                                let on_match_presence = on_match_presence.clone();
+                                let on_matchmaker_matched = on_matchmaker_matched.clone();
+                                let on_notification = on_notification.clone();
+                                let on_status_presence = on_status_presence.clone();
+                                let on_error = on_error.clone();
+                                let on_disconnect = on_disconnect.clone();
+                                let on_reconnect = on_reconnect.clone();
+                                let reconnect_config = reconnect_config.clone();
+                                let reconnect_attempts = reconnect_attempts.clone();
+                                let stored_token = stored_token.clone();
+                                let reconnecting = reconnecting.clone();
+                                let sender_ref = sender_ref.clone();
+                                let base_url = base_url.clone();
+
+                                // Spawn the new read loop
+                                spawn_read_loop(
+                                    new_read,
+                                    pending,
+                                    connected,
+                                    on_chat_message,
+                                    on_match_data,
+                                    on_match_presence,
+                                    on_matchmaker_matched,
+                                    on_notification,
+                                    on_status_presence,
+                                    on_error,
+                                    on_disconnect,
+                                    on_reconnect,
+                                    reconnect_config,
+                                    reconnect_attempts,
+                                    stored_token,
+                                    reconnecting,
+                                    sender_ref,
+                                    base_url,
+                                );
+
+                                return;
+                            }
+                            Err(_) => {
+                                // Increase delay with exponential backoff
+                                delay_ms = ((delay_ms as f64) * config.backoff_multiplier) as u64;
+                                delay_ms = delay_ms.min(config.max_delay_ms);
+                            }
+                        }
+                    }
+
+                    // Mark as no longer reconnecting
+                    {
+                        let mut r = reconnecting.write().await;
+                        *r = false;
+                    }
+                }
+            }
+
+            // Call disconnect handler (only if we couldn't reconnect)
             if let Some(handler) = on_disconnect.read().await.as_ref() {
                 handler();
             }
@@ -476,6 +911,26 @@ impl KaosSocket {
     {
         let mut h = self.on_disconnect.write().await;
         *h = Some(Box::new(handler));
+    }
+
+    /// Set handler for reconnection.
+    /// The handler receives the number of reconnection attempts that were made.
+    pub async fn on_reconnect<F>(&self, handler: F)
+    where
+        F: Fn(u32) + Send + Sync + 'static,
+    {
+        let mut h = self.on_reconnect.write().await;
+        *h = Some(Box::new(handler));
+    }
+
+    /// Check if currently attempting to reconnect.
+    pub async fn is_reconnecting(&self) -> bool {
+        *self.reconnecting.read().await
+    }
+
+    /// Get the current reconnection attempt count.
+    pub async fn reconnect_attempt_count(&self) -> u32 {
+        *self.reconnect_attempts.read().await
     }
 
     // ========================================================================

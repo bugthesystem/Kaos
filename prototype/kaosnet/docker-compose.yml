@@ -18,7 +18,7 @@
 #   - Change POSTGRES_PASSWORD in production
 
 services:
-  # Kaos.io Game Server (WebSocket + Console API)
+  # Kaos.io Game Server (WebSocket + Console API + RUDP)
   kaos-io:
     build:
       context: ../..
@@ -26,6 +26,7 @@ services:
     ports:
       - "7350:7350"   # Console API
       - "7351:7351"   # WebSocket game
+      - "7354:7354/udp"  # RUDP for native clients/bots
     environment:
       - KAOS_ENV=${KAOS_ENV:-development}
       - KAOS_JWT_SECRET=${KAOS_JWT_SECRET:?Set KAOS_JWT_SECRET in .env}
@@ -92,6 +93,20 @@ services:
     restart: unless-stopped
     networks:
       - kaosnet
+
+  # RUDP Bot (uses KaosNet Rust SDK)
+  bot:
+    build:
+      context: ../..
+      dockerfile: prototype/examples/kaos_io/Dockerfile
+    command: ["/app/kaos-io-bot", "DockerBot", "kaos-io", "7350", "7354"]
+    depends_on:
+      - kaos-io
+    restart: unless-stopped
+    networks:
+      - kaosnet
+    profiles:
+      - bot  # Only start when explicitly requested: docker compose --profile bot up
 
 volumes:
   postgres_data:

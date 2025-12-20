@@ -34,7 +34,7 @@ impl WsServer {
     /// Accept a new WebSocket connection (non-blocking)
     pub fn accept(&mut self) -> Result<Option<WsTransport>> {
         match self.listener.accept() {
-            Ok((stream, _addr)) => {
+            Ok((stream, addr)) => {
                 stream.set_nonblocking(false)?; // Blocking for handshake
 
                 let ws = accept(stream).map_err(|e| {
@@ -48,7 +48,7 @@ impl WsServer {
                 // Set non-blocking after handshake
                 ws.get_ref().set_nonblocking(true)?;
 
-                Ok(Some(WsTransport::from_server_socket(ws)))
+                Ok(Some(WsTransport::from_server_socket(ws, addr)))
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 Ok(None)

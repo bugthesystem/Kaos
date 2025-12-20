@@ -20,6 +20,24 @@ export interface AuthResponse {
   newAccount: boolean;
 }
 
+export interface Account {
+  id: string;
+  username?: string;
+  displayName?: string;
+  avatarUrl?: string;
+  email?: string;
+  devices: DeviceInfo[];
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+  disabled: boolean;
+}
+
+export interface DeviceInfo {
+  deviceId: string;
+  linkedAt: number;
+}
+
 export interface DeviceAuthRequest {
   deviceId: string;
   create?: boolean;

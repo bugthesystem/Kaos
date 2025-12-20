@@ -6,7 +6,7 @@ A high-performance multiplayer game server framework in Rust.
 
 **139 tests passing. All P1/P2 tasks complete. Ready for Cluster Mode.**
 
-### Validated Complete (Dec 17, 2024)
+### Validated Complete (Dec 19, 2024)
 - ✅ **Phase 1**: Full Lua API (18 functions: storage, leaderboard, social, presence)
 - ✅ **Phase 2**: Hooked Services - **NOW WIRED** with metrics + notifications
 - ✅ **Phase 3**: Lua Match Handler (match_init/join/leave/loop/terminate)
@@ -15,6 +15,10 @@ A high-performance multiplayer game server framework in Rust.
 - ✅ **Phase 6**: Console Players API (queries real storage)
 - ✅ **Phase 7**: Notifications integration - **NOW WIRED** to HookedSocial
 - ✅ **Phase 8**: Console `/metrics` endpoint added
+- ✅ **Phase 9**: Rust SDK reconnection (exponential backoff)
+- ✅ **Phase 10**: Console Chat page (send messages, create channels)
+- ✅ **Phase 11**: Console Social page (groups CRUD, delete_group)
+- ✅ **Phase 12**: Example games wired to KaosNet SessionRegistry
 
 ### Next Up: CLUSTER MODE
 This is the big one. Research needed:
@@ -295,19 +299,23 @@ Ports:
 - [x] Client authentication (device, email, custom)
 - [x] Server hooks (before/after hooks with HookExecutor)
 
-### Console UI (95%)
+### Console UI (98%)
 - [x] All 16 pages created and routed
 - [x] Authentication flow
 - [x] API client with generic methods
-- [x] Real API integration on 15/16 pages
+- [x] Real API integration on all pages
+- [x] Chat page: send messages, create channels
+- [x] Social page: groups CRUD (create, list, delete)
 - [ ] Players page uses sample data (API integration pending)
 
-### Demo Game (100%)
-- [x] Working WebSocket server (via kaosnet transport)
-- [x] 20Hz game loop
-- [x] Leaderboard integration
-- [x] Storage integration
-- [x] Web client with real-time sync
+### Demo Games (100%)
+- [x] kaos_io: Working WebSocket server (via kaosnet transport)
+- [x] kaos_io: 20Hz game loop
+- [x] kaos_io: Leaderboard + Storage integration
+- [x] kaos_io: Web client with real-time sync
+- [x] kaos_io: Sessions registered with KaosNet SessionRegistry
+- [x] kaos_asteroids: 60Hz RUDP multiplayer
+- [x] kaos_asteroids: Sessions registered with KaosNet SessionRegistry
 - [x] Docker setup
 
 ## What's Left
@@ -640,6 +648,28 @@ Shared functions in `console/utils.rs`:
     - Console output for development (pretty or JSON)
     - `#[instrument]` on key functions (session, room, storage)
     - TracingConfig builder for easy configuration
+26. Added Rust SDK reconnection support:
+    - `ReconnectConfig` with exponential backoff
+    - Auto-reconnect with configurable max attempts
+    - `on_reconnect` callback for handling reconnection events
+    - `is_reconnecting()` and `reconnect_attempt_count()` methods
+27. Console Chat page improvements:
+    - Send messages to channels (`POST /api/chat/channels/:id/send`)
+    - Create new channels (`POST /api/chat/channels`)
+    - Real-time message display
+28. Console Social page improvements:
+    - Delete groups (`DELETE /api/social/groups/:id`)
+    - Get group by ID (`GET /api/social/groups/:id`)
+    - List all groups (`GET /api/social/groups`)
+29. Example games wired to KaosNet services:
+    - kaos_io registers sessions with SessionRegistry on connect
+    - kaos_io removes sessions on disconnect
+    - kaos_asteroids registers sessions with SessionRegistry on connect
+    - kaos_asteroids removes sessions on disconnect
+    - Sessions now appear in Console UI when playing games
+30. WsTransport peer address support:
+    - `WsTransport::from_server_socket` now accepts peer address
+    - `peer_addr()` method returns client address for server connections
 
 ## KaosNet Standalone (prototype/kaosnet/)
 

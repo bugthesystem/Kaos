@@ -187,6 +187,55 @@ pub async fn delete_channel(req: Request, ctx: Arc<ServerContext>) -> Response {
     }
 }
 
+/// POST /api/chat/channels - Create a new channel
+pub async fn create_channel(req: Request, ctx: Arc<ServerContext>) -> Response {
+    if let Some(identity) = req.ext::<Identity>() {
+        if !identity.has_permission(Permission::ManageChat) {
+            return Response::forbidden().json(&serde_json::json!({
+                "error": "insufficient permissions"
+            }));
+        }
+    } else {
+        return Response::unauthorized().json(&serde_json::json!({
+            "error": "not authenticated"
+        }));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CreateChannelRequest {
+        name: String,
+        channel_type: String,
+    }
+
+    let body: CreateChannelRequest = match serde_json::from_slice(req.body()) {
+        Ok(b) => b,
+        Err(e) => return Response::bad_request().json(&serde_json::json!({
+            "error": format!("invalid request: {}", e)
+        })),
+    };
+
+    let ct = match body.channel_type.as_str() {
+        "room" => ChannelType::Room,
+        "group" => ChannelType::Group,
+        _ => return Response::bad_request().json(&serde_json::json!({
+            "error": "channel_type must be 'room' or 'group'"
+        })),
+    };
+
+    match ctx.chat.create_channel(&body.name, ct, None, None) {
+        Ok(channel) => Response::created().json(&ChannelInfo {
+            id: channel.id,
+            name: channel.name,
+            channel_type: channel_type_str(channel.channel_type).to_string(),
+            member_count: 0,
+            created_at: channel.created_at,
+        }),
+        Err(e) => Response::internal_error().json(&serde_json::json!({
+            "error": e.to_string()
+        })),
+    }
+}
+
 /// POST /api/chat/channels/:id/send
 pub async fn send_system_message(req: Request, ctx: Arc<ServerContext>) -> Response {
     if let Some(identity) = req.ext::<Identity>() {

@@ -67,6 +67,13 @@ impl ClientTransportType {
             _ => None,
         }
     }
+
+    fn get_addr(&self) -> Option<SocketAddr> {
+        match self {
+            ClientTransportType::WebSocket(ws) => ws.peer_addr(),
+            ClientTransportType::Rudp(addr) => Some(*addr),
+        }
+    }
 }
 
 /// Connected client with transport and identity
@@ -509,6 +516,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 println!("[+] {} joined (session={}, user={})", username, session_id, user_id);
 
+                // Register session with KaosNet sessions service
+                if let Some(peer_addr) = transport.peer_addr() {
+                    let registered_id = sessions.create(peer_addr);
+                    if let Some(mut session) = sessions.get_mut(registered_id) {
+                        session.set_authenticated(user_id.clone(), Some(username.clone()));
+                        session.join_room(game_room_id.clone());
+                    }
+                }
+
                 // Track client connection
                 clients.insert(session_id, Client {
                     transport: ClientTransportType::WebSocket(transport),
@@ -594,6 +610,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             println!("[+] {} joined via RUDP (session={}, addr={})", username, session_id, rudp_addr);
+
+            // Register session with KaosNet sessions service (RUDP)
+            let registered_id = sessions.create(rudp_addr);
+            if let Some(mut session) = sessions.get_mut(registered_id) {
+                session.set_authenticated(user_id.clone(), Some(username.clone()));
+                session.join_room(game_room_id.clone());
+            }
 
             // Track RUDP client
             rudp_sessions.insert(rudp_addr, session_id);
@@ -690,6 +713,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // ==================== Handle Disconnections ====================
         for session_id in &disconnected {
             if let Some(client) = clients.remove(session_id) {
+                // Clean up session from KaosNet sessions service
+                if let Some(addr) = client.transport.get_addr() {
+                    if let Some(sid) = sessions.get_by_addr(&addr) {
+                        sessions.remove(sid);
+                    }
+                }
+
                 // Clean up RUDP session mapping if this was an RUDP client
                 if let Some(addr) = client.transport.rudp_addr() {
                     rudp_sessions.remove(&addr);

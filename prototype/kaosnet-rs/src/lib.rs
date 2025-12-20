@@ -74,5 +74,5 @@ pub use client::{KaosClient, KaosClientBuilder};
 pub use error::{Error, Result};
 pub use rudp::{RudpClient, RudpConfig, MatchDataPacket};
 pub use session::Session;
-pub use socket::KaosSocket;
+pub use socket::{KaosSocket, ReconnectConfig};
 pub use types::*;

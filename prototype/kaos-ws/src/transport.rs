@@ -1,7 +1,7 @@
 //! WebSocket transport implementation.
 
 use std::io;
-use std::net::TcpStream;
+use std::net::{TcpStream, SocketAddr};
 
 use tungstenite::protocol::WebSocket;
 use tungstenite::stream::MaybeTlsStream;
@@ -19,6 +19,7 @@ pub enum WsTransport {
     /// Server connection (plain TCP)
     Server {
         ws: WebSocket<TcpStream>,
+        peer_addr: SocketAddr,
         closed: bool,
     },
 }
@@ -37,8 +38,16 @@ impl WsTransport {
     }
 
     /// Create from server-accepted socket
-    pub(crate) fn from_server_socket(ws: WebSocket<TcpStream>) -> Self {
-        Self::Server { ws, closed: false }
+    pub(crate) fn from_server_socket(ws: WebSocket<TcpStream>, peer_addr: SocketAddr) -> Self {
+        Self::Server { ws, peer_addr, closed: false }
+    }
+
+    /// Get the peer address (only for server connections)
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        match self {
+            Self::Client { .. } => None,
+            Self::Server { peer_addr, .. } => Some(*peer_addr),
+        }
     }
 
     /// Set blocking mode
@@ -58,15 +67,13 @@ impl WsTransport {
 
     fn is_closed(&self) -> bool {
         match self {
-            Self::Client { closed, .. } => *closed,
-            Self::Server { closed, .. } => *closed,
+            Self::Client { closed, .. } | Self::Server { closed, .. } => *closed,
         }
     }
 
     fn set_closed(&mut self) {
         match self {
-            Self::Client { closed, .. } => *closed = true,
-            Self::Server { closed, .. } => *closed = true,
+            Self::Client { closed, .. } | Self::Server { closed, .. } => *closed = true,
         }
     }
 

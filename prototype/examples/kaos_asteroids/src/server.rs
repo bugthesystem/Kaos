@@ -406,6 +406,13 @@ fn main() -> std::io::Result<()> {
                     let _ = room.add_player(session_id);
                 }
 
+                // Register session with KaosNet sessions service
+                let registered_id = sessions.create(addr);
+                if let Some(mut session) = sessions.get_mut(registered_id) {
+                    session.set_authenticated(user_id.clone(), Some(username.clone()));
+                    session.join_room(game_room_id.clone());
+                }
+
                 addr_to_session.insert(addr, session_id);
                 clients.insert(session_id, Client {
                     addr,
@@ -474,6 +481,11 @@ fn main() -> std::io::Result<()> {
         // ==================== Handle Disconnections ====================
         for session_id in disconnected {
             if let Some(client) = clients.remove(&session_id) {
+                // Clean up session from KaosNet sessions service
+                if let Some(sid) = sessions.get_by_addr(&client.addr) {
+                    sessions.remove(sid);
+                }
+
                 addr_to_session.remove(&client.addr);
                 server.disconnect(&client.addr);
 

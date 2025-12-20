@@ -493,6 +493,36 @@ impl Social {
             .collect()
     }
 
+    /// Delete a group.
+    pub fn delete_group(&self, group_id: &str) -> Result<(), SocialError> {
+        // Remove the group from the main groups map
+        let removed = self.groups.remove(group_id);
+
+        if removed.is_none() {
+            return Err(SocialError::GroupNotFound(group_id.to_string()));
+        }
+
+        // Remove all members from this group
+        self.group_members.remove(group_id);
+
+        // Remove group from all users' group lists
+        for mut user_groups in self.user_groups.iter_mut() {
+            user_groups.remove(group_id);
+        }
+
+        Ok(())
+    }
+
+    /// Get a group by ID.
+    pub fn get_group(&self, group_id: &str) -> Option<Group> {
+        self.groups.get(group_id).map(|g| g.clone())
+    }
+
+    /// List all groups.
+    pub fn list_groups(&self) -> Vec<Group> {
+        self.groups.iter().map(|g| g.clone()).collect()
+    }
+
     // ==================== Helpers ====================
 
     fn get_username(&self, user_id: &str) -> Option<String> {

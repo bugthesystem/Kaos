@@ -161,7 +161,7 @@ impl KaosClient {
             None,
         ).await?;
 
-        Ok(Session::from_data(resp.session))
+        Ok(Session::from_data(resp.session, resp.new_account))
     }
 
     /// Authenticate with email and password.
@@ -205,7 +205,7 @@ impl KaosClient {
             None,
         ).await?;
 
-        Ok(Session::from_data(resp.session))
+        Ok(Session::from_data(resp.session, resp.new_account))
     }
 
     /// Authenticate with a custom method.
@@ -248,7 +248,7 @@ impl KaosClient {
             None,
         ).await?;
 
-        Ok(Session::from_data(resp.session))
+        Ok(Session::from_data(resp.session, resp.new_account))
     }
 
     /// Refresh an expired session token.
@@ -267,7 +267,69 @@ impl KaosClient {
             None,
         ).await?;
 
-        Ok(Session::from_data(resp.session))
+        Ok(Session::from_data(resp.session, resp.new_account))
+    }
+
+    // ========================================================================
+    // Account Management
+    // ========================================================================
+
+    /// Get the authenticated user's account info.
+    pub async fn get_account(&self, session: &Session) -> Result<Account> {
+        self.get("/api/account", Some(session)).await
+    }
+
+    /// Link a device ID to the authenticated account.
+    ///
+    /// This allows logging in with multiple devices.
+    pub async fn link_device(&self, session: &Session, device_id: &str) -> Result<()> {
+        #[derive(Serialize)]
+        struct Request<'a> {
+            device_id: &'a str,
+        }
+
+        let _: LinkResponse = self.post(
+            "/api/account/link/device",
+            Request { device_id },
+            Some(session),
+        ).await?;
+
+        Ok(())
+    }
+
+    /// Link email/password to the authenticated account.
+    ///
+    /// Allows the user to log in with email after initial device auth.
+    pub async fn link_email(&self, session: &Session, email: &str, password: &str) -> Result<()> {
+        #[derive(Serialize)]
+        struct Request<'a> {
+            email: &'a str,
+            password: &'a str,
+        }
+
+        let _: LinkResponse = self.post(
+            "/api/account/link/email",
+            Request { email, password },
+            Some(session),
+        ).await?;
+
+        Ok(())
+    }
+
+    /// Unlink a device from the authenticated account.
+    pub async fn unlink_device(&self, session: &Session, device_id: &str) -> Result<()> {
+        #[derive(Serialize)]
+        struct Request<'a> {
+            device_id: &'a str,
+        }
+
+        let _: LinkResponse = self.post(
+            "/api/account/unlink/device",
+            Request { device_id },
+            Some(session),
+        ).await?;
+
+        Ok(())
     }
 
     // ========================================================================

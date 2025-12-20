@@ -353,18 +353,20 @@ After implementing this plan:
 |-------|------|--------|----------|
 | 1.1 | kaosnet-js SDK | ✅ Done | `/prototype/kaosnet-js/` |
 | 1.1 | kaosnet-rs SDK (Rust) | ✅ Done | `/prototype/kaosnet-rs/` |
+| 1.1 | kaosnet-rs reconnection | ✅ Done | Exponential backoff reconnection in `socket.rs` |
 | 1.1 | TypeScript types | ✅ Done | `/prototype/kaosnet-js/src/types.ts` |
 | 1.1 | Device/Email auth | ✅ Done | `POST /api/auth/device`, `/email`, `/custom`, `/refresh` |
 | 1.1 | Browser bundle (IIFE) | ✅ Done | `/prototype/kaosnet-js/dist/index.global.js` |
 | 1.1 | SDK example integration | ✅ Done | `/prototype/examples/kaos_io/web/index-sdk.html` |
 | 1.2 | Protocol documentation | ✅ Done | `/prototype/docs/PROTOCOL.md` (KaosTalk) |
 | 2.1 | Players page (real data) | ✅ Done | Uses `client_auth` accounts |
-| 2.1 | Chat page (real data) | ✅ Done | Uses `list_channels_with_counts` |
-| 2.1 | Social page (real data) | ✅ Done | Groups + Friends listing |
+| 2.1 | Chat page (real data) | ✅ Done | Uses `list_channels_with_counts` + send messages + create channels |
+| 2.1 | Social page (real data) | ✅ Done | Groups + Friends listing + delete groups |
 | 2.1 | Tournaments page (real data) | ✅ Done | Tournament listing |
 | 2.2 | API Explorer | ✅ Done | `/prototype/console-ui/src/pages/ApiExplorer.tsx` |
 | 2.3 | Player Management UI | ✅ Done | Server-side pagination, disabled/banned fix |
 | 3.1 | Matchmaker properties | ✅ Done | `POST /api/matchmaker/add` with string/numeric props |
+| 2.4 | Example game session wiring | ✅ Done | kaos_io + kaos_asteroids register sessions with KaosNet |
 
 ### In Progress 🔄
 
@@ -456,9 +458,11 @@ fn game_loop() -> std::io::Result<()> {
 
 ### Recently Completed
 
-- **Rust SDK** - `kaosnet-rs` with WebSocket + RUDP dual transport support
-- Console: Chat page wired to real backend with `list_channels_with_counts`
-- Console: Social page (Groups + Friends) wired to real backend
+- **Rust SDK reconnection** - `ReconnectConfig` with exponential backoff, auto-reconnect
+- **Console Chat page** - Send messages, create channels, view messages
+- **Console Social page** - Groups CRUD (create, list, delete), Friends listing
+- **Example games wired to KaosNet** - kaos_io and kaos_asteroids register sessions with SessionRegistry
+- **WsTransport peer_addr** - Server connections now track peer address for session registration
 - Console: Tournaments page wired to real backend
 
 ---

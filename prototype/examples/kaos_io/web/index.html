@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kaos.io - Multiplayer Game Demo</title>
+    <title>Kaos.io - Multiplayer Game Demo (SDK Version)</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #0a0a0a; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
@@ -46,6 +46,7 @@
         .instructions kbd { background: #222; padding: 4px 8px; border-radius: 4px; font-family: monospace; }
         .powered-by { position: absolute; bottom: 30px; color: #333; font-size: 14px; }
         .powered-by a { color: #00d4ff; text-decoration: none; }
+        .sdk-badge { background: #00d4ff; color: #000; padding: 4px 10px; border-radius: 4px; font-size: 12px; margin-left: 10px; }
 
         /* HUD */
         #hud { position: fixed; top: 20px; left: 20px; color: #fff; font-size: 14px; z-index: 50; pointer-events: none; }
@@ -87,7 +88,7 @@
     <div id="startScreen">
         <img src="logo.svg" alt="KaosNet" class="logo">
         <div class="logo-text">KAOS.IO</div>
-        <div class="subtitle">Multiplayer Arena • Powered by KaosNet</div>
+        <div class="subtitle">Multiplayer Arena • Powered by KaosNet <span class="sdk-badge">SDK</span></div>
         <div class="server-status" id="serverStatus">Connecting to server...</div>
         <div class="input-container">
             <input type="text" id="nameInput" placeholder="Enter your name" maxlength="15" autofocus>
@@ -97,10 +98,10 @@
             <strong>How to Play:</strong><br>
             Move your mouse to control direction<br>
             Eat food and smaller players to grow!<br><br>
-            <strong>KaosNet Features:</strong> Leaderboards • Storage • Real-time Sync
+            <strong>KaosNet SDK Features:</strong> Device Auth • Auto-Reconnect • Leaderboards
         </div>
         <div class="powered-by">
-            Powered by <a href="#">KaosNet</a> Game Server
+            Powered by <a href="#">KaosNet</a> Game Server + SDK
         </div>
     </div>
 
@@ -132,14 +133,36 @@
     <canvas id="minimap" style="display: none;"></canvas>
     <div id="messages"></div>
 
-    <script>
-        // Configuration
-        const WS_URL = `ws://${window.location.hostname}:7351`;
+    <!-- Load KaosNet SDK (use local copy in Docker, or relative path for dev) -->
+    <script src="kaosnet.js" onerror="this.src='../../kaosnet-js/dist/index.global.js'"></script>
 
-        // Gaffer On Games networking constants
-        const INTERPOLATION_DELAY = 100; // ms - buffer for smooth interpolation
-        const PREDICTION_ENABLED = true;
-        const INTERPOLATION_ENABLED = true;
+    <script>
+        // ========================================================================
+        // KaosNet SDK Integration
+        // ========================================================================
+        // This example uses the KaosNet SDK for:
+        // 1. Device authentication
+        // 2. WebSocket connection with auto-reconnect
+        // 3. Clean API for sending/receiving game state
+        // ========================================================================
+
+        const { KaosClient } = KaosNet;
+
+        // Create KaosNet client for HTTP API (authentication, storage, etc.)
+        const client = new KaosClient(window.location.hostname, 7350);
+
+        // Session from SDK authentication
+        let session = null;
+
+        // Generate or retrieve persistent device ID
+        function getDeviceId() {
+            let deviceId = localStorage.getItem('kaos_device_id');
+            if (!deviceId) {
+                deviceId = 'device-' + crypto.randomUUID();
+                localStorage.setItem('kaos_device_id', deviceId);
+            }
+            return deviceId;
+        }
 
         // Canvas setup
         const canvas = document.getElementById('gameCanvas');
@@ -151,46 +174,38 @@
         let gameState = null;
         let myPlayerId = null;
         let playerName = 'Player';
-        let ws = null;
         let connected = false;
         let mouseX = 0, mouseY = 0;
         let cameraX = 1000, cameraY = 1000, cameraZoom = 1;
         let messages = [];
 
         // === GAFFER ON GAMES: State Interpolation ===
-        // Store snapshots for interpolation (ring buffer of server states)
         const stateBuffer = [];
         const STATE_BUFFER_SIZE = 20;
+        const INTERPOLATION_DELAY = 100;
+        const PREDICTION_ENABLED = true;
+        const INTERPOLATION_ENABLED = true;
 
         // === GAFFER ON GAMES: Client-Side Prediction ===
-        // Local predicted state for our player
         let predictedPlayer = null;
-        let pendingInputs = []; // Inputs waiting for server confirmation
+        let pendingInputs = [];
         let inputSequence = 0;
-
-        // Interpolated positions for other players
-        const interpolatedPlayers = new Map(); // playerId -> {x, y, radius, ...}
-
-        // Server tick info for reconciliation
+        const interpolatedPlayers = new Map();
         let serverTick = 0;
-        let lastProcessedInput = 0;
 
-        // === Network stats tracking ===
+        // Network stats
         let lastServerUpdate = 0;
         let serverUpdateRate = 0;
         let updateCount = 0;
         let bytesReceived = 0;
 
-        // === GAFFER ON GAMES: Quantization ===
-        // Color palette for dequantizing food (matches server)
+        // Food colors for dequantization
         const FOOD_COLORS = [
             "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7",
             "#DDA0DD", "#98D8C8", "#F7DC6F", "#BB8FCE", "#85C1E9",
         ];
 
-        // Dequantize server state (handles both old and new format)
         function dequantizeState(raw) {
-            // Check if this is quantized format (has 'q' scale factor)
             if (raw.q) {
                 const scale = raw.q;
                 return {
@@ -218,12 +233,9 @@
                     tick: raw.t
                 };
             }
-            // Old format (unquantized) - pass through
             return raw;
         }
 
-        // === GAFFER ON GAMES: State Snapshot Buffer ===
-        // Buffer server states with timestamps for interpolation
         function bufferServerState(state) {
             const snapshot = {
                 timestamp: performance.now(),
@@ -231,30 +243,21 @@
                 players: state.players.map(p => ({...p})),
                 food: state.food
             };
-
             stateBuffer.push(snapshot);
-
-            // Keep buffer at fixed size
             while (stateBuffer.length > STATE_BUFFER_SIZE) {
                 stateBuffer.shift();
             }
         }
 
-        // === GAFFER ON GAMES: Server Reconciliation ===
-        // When we receive server state, reconcile our predicted position
         function reconcileWithServer(serverState) {
             if (!PREDICTION_ENABLED || !myPlayerId) return;
 
             const serverPlayer = serverState.players.find(p => p.id === myPlayerId);
             if (!serverPlayer) return;
 
-            // Get the server's last processed input sequence
             const serverInputSeq = serverState.last_input_seq || 0;
-
-            // Remove inputs that the server has already processed
             pendingInputs = pendingInputs.filter(input => input.seq > serverInputSeq);
 
-            // Start from server position
             if (predictedPlayer) {
                 predictedPlayer.x = serverPlayer.x;
                 predictedPlayer.y = serverPlayer.y;
@@ -263,36 +266,30 @@
                 predictedPlayer.name = serverPlayer.name;
                 predictedPlayer.color = serverPlayer.color;
 
-                // Re-apply any inputs the server hasn't processed yet
                 for (const input of pendingInputs) {
                     applyInput(predictedPlayer, input);
                 }
             } else {
-                // Initialize predicted player from server state
                 predictedPlayer = {...serverPlayer};
             }
         }
 
-        // Apply a single input to player state (for prediction replay)
         function applyInput(player, input) {
             if (!player) return;
 
-            // Calculate movement direction
             const dx = input.target_x - player.x;
             const dy = input.target_y - player.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
 
             if (dist > 5) {
-                // Speed decreases as player grows (same as server)
                 const speed = Math.max(50, 200 - player.radius);
-                const dt = input.dt || 0.05; // 50ms per input
+                const dt = input.dt || 0.05;
                 const moveX = (dx / dist) * speed * dt;
                 const moveY = (dy / dist) * speed * dt;
 
                 player.x += moveX;
                 player.y += moveY;
 
-                // Clamp to world bounds
                 if (gameState) {
                     player.x = Math.max(player.radius, Math.min(gameState.world_width - player.radius, player.x));
                     player.y = Math.max(player.radius, Math.min(gameState.world_height - player.radius, player.y));
@@ -300,15 +297,10 @@
             }
         }
 
-        // === GAFFER ON GAMES: Entity Interpolation ===
-        // Interpolate other players between server snapshots
         function interpolateEntities(renderTime) {
             if (!INTERPOLATION_ENABLED || stateBuffer.length < 2) return;
 
-            // Find the two snapshots to interpolate between
-            // We render in the past by INTERPOLATION_DELAY ms
             const targetTime = renderTime - INTERPOLATION_DELAY;
-
             let older = null;
             let newer = null;
 
@@ -321,7 +313,6 @@
                 }
             }
 
-            // If we don't have valid snapshots, use latest
             if (!older || !newer) {
                 const latest = stateBuffer[stateBuffer.length - 1];
                 for (const player of latest.players) {
@@ -332,19 +323,16 @@
                 return;
             }
 
-            // Calculate interpolation factor (0 to 1)
             const range = newer.timestamp - older.timestamp;
             const t = range > 0 ? (targetTime - older.timestamp) / range : 0;
             const clampedT = Math.max(0, Math.min(1, t));
 
-            // Interpolate each player
             for (const newerPlayer of newer.players) {
-                if (newerPlayer.id === myPlayerId) continue; // Skip self
+                if (newerPlayer.id === myPlayerId) continue;
 
                 const olderPlayer = older.players.find(p => p.id === newerPlayer.id);
 
                 if (olderPlayer) {
-                    // Lerp position
                     interpolatedPlayers.set(newerPlayer.id, {
                         ...newerPlayer,
                         x: olderPlayer.x + (newerPlayer.x - olderPlayer.x) * clampedT,
@@ -352,12 +340,10 @@
                         radius: olderPlayer.radius + (newerPlayer.radius - olderPlayer.radius) * clampedT
                     });
                 } else {
-                    // New player, no interpolation
                     interpolatedPlayers.set(newerPlayer.id, {...newerPlayer});
                 }
             }
 
-            // Remove players that are no longer in the game
             const currentIds = new Set(newer.players.map(p => p.id));
             for (const id of interpolatedPlayers.keys()) {
                 if (!currentIds.has(id)) {
@@ -366,13 +352,10 @@
             }
         }
 
-        // Get the rendered position for a player (uses prediction/interpolation)
         function getRenderedPlayer(player) {
             if (player.id === myPlayerId && PREDICTION_ENABLED && predictedPlayer) {
-                // Use predicted position for self
                 return predictedPlayer;
             } else if (player.id !== myPlayerId && INTERPOLATION_ENABLED) {
-                // Use interpolated position for others
                 return interpolatedPlayers.get(player.id) || player;
             }
             return player;
@@ -385,78 +368,115 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // WebSocket connection
-        function connect() {
+        // ========================================================================
+        // SDK-based Connection
+        // ========================================================================
+        // Note: The kaos_io game server handles auth on WebSocket connect,
+        // so we use a simplified flow with just the socket connection.
+        // For games that use the full KaosTalk protocol, you would:
+        // 1. Call client.authenticateDevice() first (uses SDK HTTP API)
+        // 2. Then connect raw WebSocket for game state (game server uses JSON protocol)
+        // ========================================================================
+        let ws = null; // Raw WebSocket for game state
+
+        async function connect() {
             const statusEl = document.getElementById('serverStatus');
             const playBtn = document.getElementById('playBtn');
 
-            statusEl.textContent = 'Connecting to server...';
+            statusEl.textContent = 'Authenticating...';
             statusEl.className = 'server-status';
 
-            ws = new WebSocket(WS_URL);
+            try {
+                // Step 1: Authenticate using KaosNet SDK
+                session = await client.authenticateDevice(getDeviceId(), true);
+                console.log('[KaosNet SDK] Authenticated:', session.userId);
 
-            ws.onopen = () => {
-                connected = true;
-                statusEl.textContent = '✓ Connected to KaosNet server';
-                statusEl.className = 'server-status connected';
-                playBtn.disabled = false;
-            };
+                statusEl.textContent = 'Connecting to game...';
 
-            ws.onmessage = async (event) => {
-                try {
-                    // Handle both text and binary (Blob) messages
-                    let data = event.data;
-                    if (data instanceof Blob) {
-                        bytesReceived += data.size;
-                        data = await data.text();
-                    } else {
-                        bytesReceived += data.length;
+                // Step 2: Connect raw WebSocket to game server
+                // The game server uses simple JSON protocol (not KaosTalk binary)
+                const wsUrl = `ws://${window.location.hostname}:7351`;
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    connected = true;
+                    statusEl.textContent = '✓ Connected (SDK Auth + Game WS)';
+                    statusEl.className = 'server-status connected';
+                    playBtn.disabled = false;
+                    console.log('[Game WS] Connected to', wsUrl);
+                };
+
+                ws.onclose = (event) => {
+                    connected = false;
+                    statusEl.textContent = 'Disconnected: ' + (event.reason || 'Connection lost');
+                    statusEl.className = 'server-status error';
+                    playBtn.disabled = true;
+                    // Auto-reconnect after 3 seconds
+                    setTimeout(connect, 3000);
+                };
+
+                ws.onerror = (error) => {
+                    statusEl.textContent = 'Connection error';
+                    statusEl.className = 'server-status error';
+                    console.error('[Game WS] Error:', error);
+                };
+
+                // Handle game state broadcasts (binary or JSON messages)
+                ws.onmessage = async (event) => {
+                    try {
+                        let text;
+                        if (event.data instanceof Blob) {
+                            text = await event.data.text();
+                        } else if (event.data instanceof ArrayBuffer) {
+                            text = new TextDecoder().decode(event.data);
+                        } else {
+                            text = event.data;
+                        }
+                        const data = JSON.parse(text);
+                        handleGameState(data);
+                    } catch (e) {
+                        console.error('[Game WS] Parse error:', e);
                     }
-                    const rawState = JSON.parse(data);
+                };
 
-                    // === GAFFER ON GAMES: Dequantize state ===
-                    // Server sends quantized ints to save bandwidth
-                    gameState = dequantizeState(rawState);
-
-                    // Track network stats
-                    const now = performance.now();
-                    if (lastServerUpdate > 0) {
-                        const delta = now - lastServerUpdate;
-                        serverUpdateRate = 0.9 * serverUpdateRate + 0.1 * (1000 / delta);
-                    }
-                    lastServerUpdate = now;
-                    updateCount++;
-
-                    // Find my player (first connection = first player for this client)
-                    if (myPlayerId === null && gameState.players.length > 0) {
-                        // We'll set this when we join
-                    }
-
-                    // === GAFFER ON GAMES: Buffer state for interpolation ===
-                    bufferServerState(gameState);
-
-                    // === GAFFER ON GAMES: Reconcile prediction with server ===
-                    reconcileWithServer(gameState);
-                } catch (e) {
-                    console.error('Parse error:', e);
-                }
-            };
-
-            ws.onclose = () => {
-                connected = false;
-                statusEl.textContent = 'Disconnected. Reconnecting...';
+            } catch (error) {
+                statusEl.textContent = 'Auth failed: ' + error.message;
                 statusEl.className = 'server-status error';
-                playBtn.disabled = true;
-                setTimeout(connect, 2000);
-            };
-
-            ws.onerror = () => {
-                statusEl.textContent = 'Connection failed. Retrying...';
-                statusEl.className = 'server-status error';
-            };
+                console.error('[KaosNet SDK] Auth error:', error);
+                // Retry connection
+                setTimeout(connect, 3000);
+            }
         }
 
-        // Start game
+        // Send input to game server via raw WebSocket
+        function sendInput(input) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(input));
+            }
+        }
+
+        // Handle incoming game state
+        function handleGameState(rawState) {
+            try {
+                bytesReceived += JSON.stringify(rawState).length;
+
+                gameState = dequantizeState(rawState);
+
+                const now = performance.now();
+                if (lastServerUpdate > 0) {
+                    const delta = now - lastServerUpdate;
+                    serverUpdateRate = 0.9 * serverUpdateRate + 0.1 * (1000 / delta);
+                }
+                lastServerUpdate = now;
+                updateCount++;
+
+                bufferServerState(gameState);
+                reconcileWithServer(gameState);
+            } catch (e) {
+                console.error('Parse error:', e);
+            }
+        }
+
         function startGame(name) {
             playerName = name || 'Player';
             document.getElementById('startScreen').style.display = 'none';
@@ -464,71 +484,61 @@
             document.getElementById('leaderboard').style.display = 'block';
             document.getElementById('minimap').style.display = 'block';
 
-            // The server assigns player ID on connection
-            // We'll identify ourselves by being the newest player
             if (gameState && gameState.players.length > 0) {
                 myPlayerId = gameState.players[gameState.players.length - 1].id;
             }
 
             addMessage('Welcome to Kaos.io!', 'info');
-            addMessage('Eat food and smaller players to grow', 'info');
+            addMessage('Using KaosNet SDK for networking', 'info');
 
             requestAnimationFrame(gameLoop);
         }
 
-        // Send input to server
-        function sendInput() {
+        // Send player input to game server
+        function sendPlayerInput() {
             if (!ws || ws.readyState !== WebSocket.OPEN || !gameState) return;
 
             const myPlayer = getMyPlayer();
             if (!myPlayer) return;
 
-            // Convert screen mouse to world coordinates
             const targetX = cameraX + (mouseX - canvas.width / 2) / cameraZoom;
             const targetY = cameraY + (mouseY - canvas.height / 2) / cameraZoom;
 
-            // === GAFFER ON GAMES: Track input for client-side prediction ===
             const input = {
                 seq: ++inputSequence,
                 target_x: targetX,
                 target_y: targetY,
-                dt: 0.05, // 50ms per input tick
+                dt: 0.05,
                 timestamp: performance.now()
             };
 
-            // Store for server reconciliation
             if (PREDICTION_ENABLED) {
                 pendingInputs.push(input);
-
-                // Limit pending inputs buffer (discard old ones)
                 while (pendingInputs.length > 60) {
                     pendingInputs.shift();
                 }
-
-                // Apply input locally for immediate response
                 if (predictedPlayer) {
                     applyInput(predictedPlayer, input);
                 }
             }
 
-            ws.send(JSON.stringify({
+            // Send input via raw WebSocket (game-specific JSON protocol)
+            sendInput({
                 seq: input.seq,
                 target_x: targetX,
                 target_y: targetY,
                 name: playerName
-            }));
+            });
         }
 
         function getMyPlayer() {
             if (!gameState) return null;
-            // Find player with highest ID (most recently joined = us)
             if (myPlayerId) {
                 return gameState.players.find(p => p.id === myPlayerId);
             }
             return gameState.players[gameState.players.length - 1];
         }
 
-        // Messages
         function addMessage(text, type = 'info') {
             messages.push({ text, type, time: Date.now() });
             if (messages.length > 5) messages.shift();
@@ -543,11 +553,9 @@
                 .join('');
         }
 
-        // Update leaderboard UI
         function updateLeaderboard() {
             if (!gameState) return;
 
-            // Current game leaderboard
             const currentSorted = [...gameState.players].sort((a, b) => b.score - a.score).slice(0, 5);
             const currentList = document.getElementById('currentLeaderboard');
             const myPlayer = getMyPlayer();
@@ -560,7 +568,6 @@
                 </div>`;
             }).join('');
 
-            // All-time leaderboard from server
             const allTimeList = document.getElementById('allTimeLeaderboard');
             if (gameState.leaderboard && gameState.leaderboard.length > 0) {
                 allTimeList.innerHTML = gameState.leaderboard.slice(0, 5).map(entry => {
@@ -576,18 +583,15 @@
             }
         }
 
-        // Update HUD
         function updateHUD() {
             const myPlayer = getMyPlayer();
             if (myPlayer) {
-                // Use predicted score if available
                 const displayPlayer = PREDICTION_ENABLED && predictedPlayer ? predictedPlayer : myPlayer;
                 document.getElementById('scoreValue').textContent = displayPlayer.score;
                 document.getElementById('highScoreValue').textContent = myPlayer.high_score;
                 document.getElementById('killsValue').textContent = myPlayer.kills;
             }
 
-            // Update network stats
             const kbReceived = (bytesReceived / 1024).toFixed(1);
             const pendingCount = pendingInputs.length;
             const bufferSize = stateBuffer.length;
@@ -595,7 +599,6 @@
                 `${serverUpdateRate.toFixed(0)}Hz | ${kbReceived}KB | P:${pendingCount} B:${bufferSize}`;
         }
 
-        // Mouse handling
         canvas.addEventListener('mousemove', (e) => { mouseX = e.clientX; mouseY = e.clientY; });
         canvas.addEventListener('touchmove', (e) => {
             e.preventDefault();
@@ -603,7 +606,6 @@
             mouseY = e.touches[0].clientY;
         });
 
-        // Game loop
         let lastTime = performance.now();
         let inputTimer = 0;
 
@@ -611,17 +613,14 @@
             const dt = (currentTime - lastTime) / 1000;
             lastTime = currentTime;
 
-            // Send input periodically
             inputTimer += dt;
-            if (inputTimer > 0.05) { // 20 times per second
-                sendInput();
+            if (inputTimer > 0.05) {
+                sendPlayerInput();
                 inputTimer = 0;
             }
 
-            // === GAFFER ON GAMES: Interpolate other entities ===
             interpolateEntities(currentTime);
 
-            // Update camera to follow player (use predicted position for responsiveness)
             const myPlayer = getMyPlayer();
             const cameraTarget = PREDICTION_ENABLED && predictedPlayer ? predictedPlayer : myPlayer;
             if (cameraTarget && gameState) {
@@ -638,7 +637,6 @@
             requestAnimationFrame(gameLoop);
         }
 
-        // Render
         function render() {
             ctx.fillStyle = '#111';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -659,7 +657,7 @@
             const worldWidth = gameState.world_width;
             const worldHeight = gameState.world_height;
 
-            // Draw grid
+            // Grid
             ctx.strokeStyle = '#1a1a1a';
             ctx.lineWidth = 1;
             for (let x = 0; x <= worldWidth; x += 50) {
@@ -669,12 +667,12 @@
                 ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(worldWidth, y); ctx.stroke();
             }
 
-            // Draw border
+            // Border
             ctx.strokeStyle = '#333';
             ctx.lineWidth = 5;
             ctx.strokeRect(0, 0, worldWidth, worldHeight);
 
-            // Draw food
+            // Food
             for (const f of gameState.food) {
                 ctx.beginPath();
                 ctx.arc(f.x, f.y, f.radius, 0, Math.PI * 2);
@@ -682,15 +680,13 @@
                 ctx.fill();
             }
 
-            // Draw players (smallest first)
-            // === GAFFER ON GAMES: Use rendered positions (predicted/interpolated) ===
+            // Players
             const sortedPlayers = [...gameState.players]
                 .map(p => getRenderedPlayer(p))
                 .sort((a, b) => a.radius - b.radius);
             const myPlayer = getMyPlayer();
 
             for (const p of sortedPlayers) {
-                // Glow
                 const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius * 1.2);
                 gradient.addColorStop(0, p.color);
                 gradient.addColorStop(0.8, p.color);
@@ -700,25 +696,21 @@
                 ctx.fillStyle = gradient;
                 ctx.fill();
 
-                // Body
                 ctx.beginPath();
                 ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
                 ctx.fillStyle = p.color;
                 ctx.fill();
 
-                // Border (highlight self)
                 ctx.strokeStyle = myPlayer && p.id === myPlayer.id ? '#fff' : 'rgba(255,255,255,0.3)';
                 ctx.lineWidth = myPlayer && p.id === myPlayer.id ? 4 : 2;
                 ctx.stroke();
 
-                // Name
                 ctx.fillStyle = '#fff';
                 ctx.font = `bold ${Math.max(14, p.radius / 2)}px sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(p.name, p.x, p.y - 5);
 
-                // Score
                 ctx.font = `${Math.max(10, p.radius / 3)}px sans-serif`;
                 ctx.fillStyle = 'rgba(255,255,255,0.7)';
                 ctx.fillText(p.score, p.x, p.y + p.radius / 4);
@@ -727,7 +719,6 @@
             ctx.restore();
         }
 
-        // Minimap
         function renderMinimap() {
             if (!gameState) return;
 
@@ -741,7 +732,6 @@
             const scale = mmWidth / gameState.world_width;
             const myPlayer = getMyPlayer();
 
-            // === GAFFER ON GAMES: Use rendered positions for minimap too ===
             for (const serverPlayer of gameState.players) {
                 const p = getRenderedPlayer(serverPlayer);
                 minimapCtx.beginPath();
@@ -750,7 +740,6 @@
                 minimapCtx.fill();
             }
 
-            // Viewport
             minimapCtx.strokeStyle = 'rgba(255,255,255,0.5)';
             minimapCtx.lineWidth = 1;
             minimapCtx.strokeRect(
@@ -761,7 +750,6 @@
             );
         }
 
-        // Event listeners
         document.getElementById('playBtn').addEventListener('click', () => {
             startGame(document.getElementById('nameInput').value.trim());
         });
@@ -769,7 +757,7 @@
             if (e.key === 'Enter') startGame(document.getElementById('nameInput').value.trim());
         });
 
-        // Connect on load
+        // Connect using SDK on load
         connect();
     </script>
 </body>

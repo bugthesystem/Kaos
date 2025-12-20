@@ -13,6 +13,22 @@ interface AuthResponse {
     session: Session;
     newAccount: boolean;
 }
+interface Account {
+    id: string;
+    username?: string;
+    displayName?: string;
+    avatarUrl?: string;
+    email?: string;
+    devices: DeviceInfo[];
+    metadata?: Record<string, unknown>;
+    createdAt: number;
+    updatedAt: number;
+    disabled: boolean;
+}
+interface DeviceInfo {
+    deviceId: string;
+    linkedAt: number;
+}
 interface DeviceAuthRequest {
     deviceId: string;
     create?: boolean;
@@ -352,6 +368,24 @@ declare class KaosClient {
      */
     isSessionExpired(session: Session): boolean;
     /**
+     * Get the authenticated user's account info.
+     */
+    getAccount(session: Session): Promise<Account>;
+    /**
+     * Link a device ID to the authenticated account.
+     * Allows logging in with multiple devices.
+     */
+    linkDevice(session: Session, deviceId: string): Promise<void>;
+    /**
+     * Link email/password to the authenticated account.
+     * Allows the user to log in with email after initial device auth.
+     */
+    linkEmail(session: Session, email: string, password: string): Promise<void>;
+    /**
+     * Unlink a device from the authenticated account.
+     */
+    unlinkDevice(session: Session, deviceId: string): Promise<void>;
+    /**
      * Create a new WebSocket connection for real-time communication.
      */
     createSocket(): KaosSocket;
@@ -456,4 +490,4 @@ declare class KaosClient {
     rpc<T = unknown, R = unknown>(session: Session, id: string, payload?: T): Promise<R>;
 }
 
-export { type AuthResponse, KaosClient as Client, type ClientOptions, type ConnectionState, type CustomAuthRequest, type DeviceAuthRequest, type EmailAuthRequest, KaosClient, type KaosNetEvents, KaosSocket, type LeaderboardRecord, type LeaderboardRecordList, type Match, type MatchState, type MatchmakerAddRequest, type MatchmakerMatch, type MatchmakerTicket, type MatchmakerUser, OpCode, type Presence, type RpcResponse, type Session, KaosSocket as Socket, type SocketOptions, type StorageDeleteRequest, type StorageObject, type StorageReadRequest, type StorageWriteRequest };
+export { type Account, type AuthResponse, KaosClient as Client, type ClientOptions, type ConnectionState, type CustomAuthRequest, type DeviceAuthRequest, type DeviceInfo, type EmailAuthRequest, KaosClient, type KaosNetEvents, KaosSocket, type LeaderboardRecord, type LeaderboardRecordList, type Match, type MatchState, type MatchmakerAddRequest, type MatchmakerMatch, type MatchmakerTicket, type MatchmakerUser, OpCode, type Presence, type RpcResponse, type Session, KaosSocket as Socket, type SocketOptions, type StorageDeleteRequest, type StorageObject, type StorageReadRequest, type StorageWriteRequest };

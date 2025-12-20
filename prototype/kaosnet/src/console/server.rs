@@ -375,6 +375,36 @@ impl ConsoleServer {
                 }
             })
 
+            // Account routes (requires client auth)
+            .get("/api/account", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::get_my_account(req, ctx).await }
+                }
+            })
+            .post("/api/account/link/device", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::link_device(req, ctx).await }
+                }
+            })
+            .post("/api/account/link/email", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::link_email(req, ctx).await }
+                }
+            })
+            .post("/api/account/unlink/device", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::unlink_device(req, ctx).await }
+                }
+            })
+
             // Status routes (may be public)
             .get("/api/status", {
                 let ctx = Arc::clone(&ctx);
@@ -739,6 +769,13 @@ impl ConsoleServer {
                     async move { handlers::list_channels(req, ctx).await }
                 }
             })
+            .post("/api/chat/channels", {
+                let ctx = Arc::clone(&ctx);
+                move |req| {
+                    let ctx = Arc::clone(&ctx);
+                    async move { handlers::create_channel(req, ctx).await }
+                }
+            })
             .get("/api/chat/channels/:id", {
                 let ctx = Arc::clone(&ctx);
                 move |req| {
@@ -923,10 +960,12 @@ impl AuthMiddleware {
         }
 
         // Always public - game client auth (SDK)
+        // These handle their own Bearer token auth
         if path == "/api/auth/device"
             || path == "/api/auth/email"
             || path == "/api/auth/custom"
             || path == "/api/auth/refresh"
+            || path.starts_with("/api/account")
         {
             return true;
         }
