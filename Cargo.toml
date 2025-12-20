@@ -5,13 +5,7 @@ members = [
     "kaos-ipc",
     "kaos-test-support",
     "kaos-driver",
-    "kaos-archive",
-    "prototype/kaos-ws",
-    "prototype/kaos-http",
-    "prototype/kaosnet",
-    "prototype/kaosnet-rs",
-    "prototype/examples/kaos_io",
-    "prototype/examples/kaos_asteroids"
+    "kaos-archive"
 ]
 exclude = [
     "ext-libs"
