@@ -60,6 +60,7 @@ pub mod congestion;
 #[cfg(feature = "driver")]
 pub mod driver;
 pub mod multicast;
+pub mod mux;
 mod sendmmsg;
 pub mod server;
 mod window;
@@ -88,6 +89,7 @@ pub use congestion::CongestionController as Congestion;
 pub use driver::DriverTransport;
 use kaos::{record_backpressure, record_receive, record_retransmit, record_send};
 pub use multicast::{MulticastSocket, MulticastTransport};
+pub use mux::{GameHandler, MuxRudpServer};
 pub use server::{RudpServer, RudpServerClient};
 use window::BitmapWindow;
 
