@@ -5,15 +5,17 @@ use kaos::crc32;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Message types for reliable UDP protocol
+/// Must match kaosengine-rs/src/rudp.rs MessageType values
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MessageType {
     Data = 0,
-    Heartbeat = 1,
+    Ack = 1,
     Nak = 2,
-    SessionStart = 3,
-    SessionEnd = 4,
-    Ack = 5,
+    Ping = 3,
+    Pong = 4,
+    Handshake = 5,
+    Disconnect = 6,
 }
 
 impl TryFrom<u8> for MessageType {
@@ -22,11 +24,12 @@ impl TryFrom<u8> for MessageType {
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(MessageType::Data),
-            1 => Ok(MessageType::Heartbeat),
+            1 => Ok(MessageType::Ack),
             2 => Ok(MessageType::Nak),
-            3 => Ok(MessageType::SessionStart),
-            4 => Ok(MessageType::SessionEnd),
-            5 => Ok(MessageType::Ack),
+            3 => Ok(MessageType::Ping),
+            4 => Ok(MessageType::Pong),
+            5 => Ok(MessageType::Handshake),
+            6 => Ok(MessageType::Disconnect),
             _ => Err(()),
         }
     }

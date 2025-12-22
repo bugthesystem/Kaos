@@ -296,6 +296,18 @@ impl RudpServer {
                     client.congestion.on_loss();
                     self.retransmit_for_client(src_addr, header.sequence);
                 }
+                t if t == MessageType::Handshake as u8 => {
+                    // Handshake received - advance receive window past the handshake sequence
+                    // so we expect the first data packet (handshake seq + 1)
+                    let handshake_seq = header.sequence;
+                    if handshake_seq == 0 {
+                        // Client sends handshake with seq 0, then data starts at seq 1
+                        // We need to advance the window to expect seq 1
+                        client.recv_window.advance_expected(1);
+                    }
+                    // Send ACK for handshake
+                    self.send_ack_to(src_addr, handshake_seq);
+                }
                 _ => {}
             }
         }

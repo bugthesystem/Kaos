@@ -259,6 +259,14 @@ impl BitmapWindow {
             self.ring.next_expected_seq - 1
         }
     }
+
+    /// Advance the expected sequence number to skip non-data packets (like handshakes).
+    /// Used when we receive a handshake packet and need to start expecting data packets.
+    pub fn advance_expected(&mut self, new_expected: u64) {
+        if new_expected > self.ring.next_expected_seq {
+            self.ring.next_expected_seq = new_expected;
+        }
+    }
 }
 
 #[cfg(test)]
