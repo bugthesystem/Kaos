@@ -1,39 +1,13 @@
 //! Protocol headers for reliable UDP.
+//!
+//! Re-exports shared types from `kaos-shared` for backward compatibility.
 
 use bytemuck::{Pod, Zeroable};
 use kaos::crc32;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Message types for reliable UDP protocol
-/// Must match kaosengine-rs/src/rudp.rs MessageType values
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum MessageType {
-    Data = 0,
-    Ack = 1,
-    Nak = 2,
-    Ping = 3,
-    Pong = 4,
-    Handshake = 5,
-    Disconnect = 6,
-}
-
-impl TryFrom<u8> for MessageType {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(MessageType::Data),
-            1 => Ok(MessageType::Ack),
-            2 => Ok(MessageType::Nak),
-            3 => Ok(MessageType::Ping),
-            4 => Ok(MessageType::Pong),
-            5 => Ok(MessageType::Handshake),
-            6 => Ok(MessageType::Disconnect),
-            _ => Err(()),
-        }
-    }
-}
+// Re-export MessageType from kaos-shared (single source of truth)
+pub use kaos_shared::MessageType;
 
 /// Header flags
 pub const FLAG_NO_CRC: u8 = 0x01;

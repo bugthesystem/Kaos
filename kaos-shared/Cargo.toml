@@ -1,0 +1,14 @@
+[package]
+name = "kaos-shared"
+version = "0.1.0"
+edition = "2021"
+description = "Shared protocol types for Kaos networking (MessageType, PacketHeader, CRC32)"
+license = "MIT"
+
+[dependencies]
+# For Pod/Zeroable derives (safe byte casting)
+bytemuck = { version = "1.14", features = ["derive"] }
+# CRC32 checksum
+crc32fast = "1.3"
+
+[dev-dependencies]

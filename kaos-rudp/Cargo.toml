@@ -19,6 +19,7 @@ tracy = ["tracing", "kaos/tracy"]
 
 [dependencies]
 kaos = { path = "../kaos" }
+kaos-shared = { path = "../kaos-shared" }
 kaos-ipc = { path = "../kaos-ipc", optional = true }
 kaos-archive = { path = "../kaos-archive", optional = true }
 bytemuck = { version = "1.14", features = ["derive"] }

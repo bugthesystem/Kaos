@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "kaos",
+    "kaos-shared",
     "kaos-rudp",
     "kaos-ipc",
     "kaos-test-support",
