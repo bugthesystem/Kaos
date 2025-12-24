@@ -61,6 +61,7 @@ pub mod congestion;
 pub mod driver;
 pub mod multicast;
 pub mod mux;
+pub mod mux_adapter;
 mod sendmmsg;
 pub mod server;
 mod window;
@@ -90,6 +91,7 @@ pub use driver::DriverTransport;
 use kaos::{record_backpressure, record_receive, record_retransmit, record_send};
 pub use multicast::{MulticastSocket, MulticastTransport};
 pub use mux::{GameHandler, MuxRudpServer};
+pub use mux_adapter::MuxRudpAdapter;
 pub use server::{RudpServer, RudpServerClient};
 use window::BitmapWindow;
 
