@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn test_client_timeout() {
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
-        let mut state = ClientState::new(addr, 64).unwrap();
+        let state = ClientState::new(addr, 64).unwrap();
 
         // Immediately after creation, should not be timed out
         assert!(!state.is_timed_out(Duration::from_secs(30)));

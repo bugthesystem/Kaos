@@ -68,18 +68,6 @@ mod window;
 
 pub use header::{FastHeader, MessageType, ReliableUdpHeader, FAST_HEADER_MAGIC, FLAG_NO_CRC};
 
-// Tracing macros - no-op when feature disabled
-#[cfg(feature = "tracing")]
-macro_rules! trace_debug { ($($arg:tt)*) => { tracing::debug!($($arg)*) } }
-#[cfg(not(feature = "tracing"))]
-macro_rules! trace_debug { ($($arg:tt)*) => {} }
-
-#[cfg(feature = "tracing")]
-macro_rules! trace_warn { ($($arg:tt)*) => { tracing::warn!($($arg)*) } }
-#[cfg(not(feature = "tracing"))]
-macro_rules! trace_warn { ($($arg:tt)*) => {} }
-
-// Core trait - all transports implement this
 pub use transport::{Archived, BatchTransport, Reliable, Transport};
 
 #[cfg(feature = "archive")]
@@ -244,7 +232,6 @@ impl RudpTransport {
         let mut stack_buf = [0u8; MAX_STACK_SIZE];
 
         let packet: &[u8] = if total_len <= MAX_STACK_SIZE {
-            // Safe: ReliableUdpHeader derives Pod
             stack_buf[..ReliableUdpHeader::SIZE].copy_from_slice(bytemuck::bytes_of(&header));
             stack_buf[ReliableUdpHeader::SIZE..total_len].copy_from_slice(data);
             &stack_buf[..total_len]
@@ -252,7 +239,6 @@ impl RudpTransport {
             return LARGE_MSG_BUFFER.with(|buf_cell| {
                 let mut buffer = buf_cell.borrow_mut();
                 buffer.clear();
-                // Safe: ReliableUdpHeader derives Pod
                 buffer.extend_from_slice(bytemuck::bytes_of(&header));
                 buffer.extend_from_slice(data);
 
@@ -328,7 +314,6 @@ impl RudpTransport {
 
                     // Minimal 8-byte header
                     let header = FastHeader::new(seq, msg.len());
-                    // Safe: FastHeader derives Pod
                     buf.extend_from_slice(bytemuck::bytes_of(&header));
                     buf.extend_from_slice(msg);
                 }
@@ -398,36 +383,17 @@ impl RudpTransport {
         let payload = [start_seq.to_le_bytes(), end_seq.to_le_bytes()].concat();
         let mut header = ReliableUdpHeader::new(0, start_seq, MessageType::Nak, 16);
         header.calculate_checksum(&payload);
-        // Safe: ReliableUdpHeader derives Pod
         packet.extend_from_slice(bytemuck::bytes_of(&header));
         packet.extend_from_slice(&payload);
 
-        
-        trace_debug!(
-            "[NAK-SEND] Sending batch NAK for seq {}-{} to {}",
-            start_seq, end_seq, self.remote_nak_addr
-        );
-        if let Err(_e) = self.nak_socket.send_to(&packet, self.remote_nak_addr) {
-            
-            trace_warn!("[NAK-SEND-ERROR] Failed to send NAK: {}", _e);
-        } else {
-            
-            trace_debug!("[NAK-SEND-OK] Batch NAK sent successfully");
-        }
+        let _ = self.nak_socket.send_to(&packet, self.remote_nak_addr);
     }
 
     /// Send ACK to confirm receipt up to a sequence number
     pub fn send_ack(&self, acked_seq: u64) {
         let mut header = ReliableUdpHeader::new(0, acked_seq, MessageType::Ack, 0);
         header.calculate_checksum(&[]);
-        // Safe: ReliableUdpHeader derives Pod
         let packet = bytemuck::bytes_of(&header);
-
-        
-        trace_debug!(
-            "[ACK-SEND] Sending ACK for seq {} to {}",
-            acked_seq, self.remote_nak_addr
-        );
         let _ = self.nak_socket.send_to(packet, self.remote_nak_addr);
     }
 
@@ -451,18 +417,10 @@ impl RudpTransport {
                                 // Count newly acknowledged packets
                                 let newly_acked = acked.saturating_sub(self.acked_seq);
                                 
-                                
-                                trace_debug!(
-                                    "[ACK-RECV] ACK seq {}, {} packets acked",
-                                    acked, newly_acked
-                                );
-                                
-                                // Call on_ack() for EACH acked packet
                                 for _ in 0..newly_acked {
                                     self.congestion.on_ack();
                                 }
                                 
-                                // Measure RTT (approximate: time since last send)
                                 let rtt_us = self.last_send_time.elapsed().as_micros() as u64;
                                 if rtt_us > 0 && rtt_us < 1_000_000 {
                                     self.congestion.update_rtt(rtt_us);
@@ -501,11 +459,6 @@ impl RudpTransport {
                     _nak_count += 1;
 
                     if len < ReliableUdpHeader::SIZE {
-                        
-                        trace_debug!(
-                            "[NAK] Received invalid NAK (too short: {} bytes) from {:?}",
-                            len, _src
-                        );
                         continue;
                     }
 
@@ -515,8 +468,6 @@ impl RudpTransport {
                         let msg_type = header.msg_type;
 
                         if msg_type != (MessageType::Nak as u8) {
-                            
-                            trace_debug!("[NAK] Received non-NAK message type: {}", msg_type);
                             continue;
                         }
 
@@ -524,11 +475,6 @@ impl RudpTransport {
 
                         if payload.len() >= 16 && payload.len() % 16 == 0 {
                             let range_count = payload.len() / 16;
-                            
-                            trace_debug!(
-                                "[NAK] Received batch NAK from {} with {} ranges",
-                                _src, range_count
-                            );
 
                             for i in 0..range_count {
                                 let offset = i * 16;
@@ -540,34 +486,19 @@ impl RudpTransport {
                                 );
                                 let count = (end_seq - start_seq + 1) as usize;
 
-                                
-                                trace_debug!(
-                                    "[NAK] Range {}: seq {}-{} ({} packets)",
-                                    i, start_seq, end_seq, count
-                                );
                                 self.retransmit_batch(start_seq, end_seq);
                                 _retransmit_count += count;
                             }
                         } else {
-                            
-                            trace_debug!(
-                                "[NAK] Received single NAK from {} for seq {}",
-                                _src, sequence
-                            );
                             self.retransmit(sequence);
                             _retransmit_count += 1;
                         }
-                    } else {
-                        
-                        trace_debug!("[NAK] Failed to parse NAK header");
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     break;
                 }
-                Err(_e) => {
-                    
-                    trace_debug!("[NAK] Socket error: {}", _e);
+                Err(_) => {
                     break;
                 }
             }
@@ -618,9 +549,7 @@ impl RudpTransport {
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                             break;
                         }
-                        Err(_e) => {
-                            
-                            trace_warn!("[ERR] Socket error: {}", _e);
+                        Err(_) => {
                             break;
                         }
                     }
@@ -633,12 +562,10 @@ impl RudpTransport {
                         continue;
                     }
 
-                    // Detect format via magic bit in first u32
                     let first_u32 = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
                     let is_fast = (first_u32 & FAST_HEADER_MAGIC) != 0;
 
                     if is_fast {
-                        // Parse FastHeader format (ultra-fast path)
                         let mut offset = 0;
                         while offset + FastHeader::SIZE <= len {
                             let frame_len_raw = u32::from_le_bytes([
@@ -667,7 +594,6 @@ impl RudpTransport {
                         && first_u32 < 2000
                         && 4 + (first_u32 as usize) <= len
                     {
-                        // Parse standard batch format (fast path with 24-byte header)
                         let mut offset = 0;
                         while offset + 4 <= len {
                             let pkt_len = u32::from_le_bytes([
@@ -700,7 +626,6 @@ impl RudpTransport {
                             }
                         }
                     } else {
-                        // Parse single packet format
                         if let Some(header) =
                             ReliableUdpHeader::from_bytes(&data[..ReliableUdpHeader::SIZE])
                         {
@@ -721,13 +646,11 @@ impl RudpTransport {
                     f(msg);
                 });
 
-                // Send ACK for highest delivered sequence
                 let last_delivered = self.recv_window.last_delivered_seq();
                 if last_delivered > 0 {
                     self.send_ack(last_delivered);
                 }
 
-                // NAK backoff: limit to once per RTT
                 let nak_interval = std::time::Duration::from_micros(self.congestion.rtt_us().max(1000));
                 if self.last_nak_time.elapsed() >= nak_interval {
                     self.recv_window.send_batch_naks_for_gaps(|start, end| {

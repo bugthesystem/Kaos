@@ -23,7 +23,6 @@ pub struct DriverTransport {
 impl DriverTransport {
     /// Create transport (requires kaos-driver running)
     pub fn new() -> io::Result<Self> {
-        // Step 1: App creates send ring (driver is waiting for this)
         let to_driver = Publisher::create(SEND_PATH, RING_SIZE)?;
         let from_driver = Self::wait_for_recv_ring()?;
 
@@ -38,7 +37,6 @@ impl DriverTransport {
     pub fn with_paths(send_path: &str, recv_path: &str) -> io::Result<Self> {
         let to_driver = Publisher::create(send_path, RING_SIZE)?;
 
-        // Wait for driver
         let from_driver = loop {
             match Subscriber::open(recv_path) {
                 Ok(s) => {
@@ -97,15 +95,11 @@ impl DriverTransport {
 mod tests {
     use super::*;
 
-    // Note: These tests require kaos-driver to be running
-    // Run with: cargo test -p kaos-rudp driver -- --ignored
-
     #[test]
     #[ignore]
     fn test_driver_transport() {
         let mut transport = DriverTransport::new().expect("Start kaos-driver first");
 
-        // Send some values
         for i in 0..100u64 {
             transport.send(i).unwrap();
         }
