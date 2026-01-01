@@ -35,7 +35,7 @@ use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 
-use crate::mux::{GameHandler, MuxRudpServer};
+use crate::mux::{MuxHandler, MuxRudpServer};
 
 /// Event types collected by the adapter
 #[derive(Debug, Clone)]
@@ -56,7 +56,7 @@ impl QueuedGameHandler {
     }
 }
 
-impl GameHandler for QueuedGameHandler {
+impl MuxHandler for QueuedGameHandler {
     fn on_connect(&mut self, client: SocketAddr) {
         if let Ok(mut events) = self.events.lock() {
             events.push(MuxEvent::Connect(client));
@@ -82,7 +82,7 @@ impl GameHandler for QueuedGameHandler {
 /// their poll-based architecture.
 pub struct MuxRudpAdapter {
     server: MuxRudpServer,
-    game_id: u8,
+    mux_key: u32,
     events: Arc<Mutex<Vec<MuxEvent>>>,
     /// Pending new clients
     pending_accepts: Vec<SocketAddr>,
@@ -95,26 +95,26 @@ pub struct MuxRudpAdapter {
 impl MuxRudpAdapter {
     /// Bind to an address and create a new multiplexed RUDP server adapter.
     ///
-    /// The `game_id` is the 1-byte prefix that clients must include in packets.
-    pub fn bind<A: ToSocketAddrs>(addr: A, game_id: u8) -> io::Result<Self> {
-        Self::bind_with_window(addr, game_id, 256)
+    /// The `mux_key` is the 4-byte prefix that clients must include in packets.
+    pub fn bind<A: ToSocketAddrs>(addr: A, mux_key: u32) -> io::Result<Self> {
+        Self::bind_with_window(addr, mux_key, 256)
     }
 
     /// Bind with custom window size.
     pub fn bind_with_window<A: ToSocketAddrs>(
         addr: A,
-        game_id: u8,
+        mux_key: u32,
         window_size: usize,
     ) -> io::Result<Self> {
         let mut server = MuxRudpServer::bind_with_window(addr, window_size)?;
         let events = Arc::new(Mutex::new(Vec::new()));
 
-        // Register handler for this game_id
-        server.register(game_id, Box::new(QueuedGameHandler::new(Arc::clone(&events))));
+        // Register handler for this mux_key
+        server.register(mux_key, Box::new(QueuedGameHandler::new(Arc::clone(&events))));
 
         Ok(Self {
             server,
-            game_id,
+            mux_key,
             events,
             pending_accepts: Vec::new(),
             client_messages: HashMap::new(),
@@ -127,9 +127,9 @@ impl MuxRudpAdapter {
         self.server.local_addr()
     }
 
-    /// Get the game_id this adapter is handling.
-    pub fn game_id(&self) -> u8 {
-        self.game_id
+    /// Get the mux_key this adapter is handling.
+    pub fn mux_key(&self) -> u32 {
+        self.mux_key
     }
 
     /// Get number of connected clients.
@@ -211,9 +211,9 @@ impl MuxRudpAdapter {
         self.server.send(client_addr, data)
     }
 
-    /// Broadcast data to all clients of this game.
+    /// Broadcast data to all clients with this mux_key.
     pub fn broadcast(&mut self, data: &[u8]) -> usize {
-        self.server.broadcast(self.game_id, data)
+        self.server.broadcast(self.mux_key, data)
     }
 
     /// Disconnect a client.
@@ -223,11 +223,11 @@ impl MuxRudpAdapter {
         self.client_messages.remove(client_addr);
     }
 
-    /// Register an additional game handler for a different game_id.
+    /// Register an additional handler for a different mux_key.
     ///
     /// This allows running multiple games on the same port.
-    pub fn register_game(&mut self, game_id: u8, handler: Box<dyn GameHandler>) {
-        self.server.register(game_id, handler);
+    pub fn register_handler(&mut self, mux_key: u32, handler: Box<dyn MuxHandler>) {
+        self.server.register(mux_key, handler);
     }
 
     /// Get the underlying MuxRudpServer for advanced usage.
@@ -247,15 +247,15 @@ mod tests {
 
     #[test]
     fn test_adapter_bind() {
-        let adapter = MuxRudpAdapter::bind("127.0.0.1:0", 0x01).unwrap();
+        let adapter = MuxRudpAdapter::bind("127.0.0.1:0", 1).unwrap();
         assert_eq!(adapter.client_count(), 0);
-        assert_eq!(adapter.game_id(), 0x01);
+        assert_eq!(adapter.mux_key(), 1);
         assert!(adapter.local_addr().port() > 0);
     }
 
     #[test]
     fn test_adapter_poll_empty() {
-        let mut adapter = MuxRudpAdapter::bind("127.0.0.1:0", 0x01).unwrap();
+        let mut adapter = MuxRudpAdapter::bind("127.0.0.1:0", 1).unwrap();
         adapter.poll(); // Should not panic
         assert_eq!(adapter.client_count(), 0);
         assert!(adapter.accept().is_none());
@@ -263,53 +263,53 @@ mod tests {
 
     #[test]
     fn test_adapter_has_client() {
-        let adapter = MuxRudpAdapter::bind("127.0.0.1:0", 0x01).unwrap();
+        let adapter = MuxRudpAdapter::bind("127.0.0.1:0", 1).unwrap();
         let fake_addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
         assert!(!adapter.has_client(&fake_addr));
     }
 
     #[test]
     fn test_adapter_send_unknown_client() {
-        let mut adapter = MuxRudpAdapter::bind("127.0.0.1:0", 0x01).unwrap();
+        let mut adapter = MuxRudpAdapter::bind("127.0.0.1:0", 1).unwrap();
         let unknown_addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
         let result = adapter.send(&unknown_addr, b"test");
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_adapter_register_multiple_games() {
-        use crate::GameHandler;
+    fn test_adapter_register_multiple_handlers() {
+        use crate::MuxHandler;
 
         struct DummyHandler;
-        impl GameHandler for DummyHandler {
+        impl MuxHandler for DummyHandler {
             fn on_connect(&mut self, _: SocketAddr) {}
             fn on_message(&mut self, _: SocketAddr, _: &[u8]) {}
             fn on_disconnect(&mut self, _: SocketAddr) {}
         }
 
-        let mut adapter = MuxRudpAdapter::bind("127.0.0.1:0", 0x01).unwrap();
+        let mut adapter = MuxRudpAdapter::bind("127.0.0.1:0", 1).unwrap();
 
-        // Register additional game on same port (should not panic)
-        adapter.register_game(0x02, Box::new(DummyHandler));
+        // Register additional handler on same port (should not panic)
+        adapter.register_handler(2, Box::new(DummyHandler));
 
-        // Primary game_id should still be 0x01
-        assert_eq!(adapter.game_id(), 0x01);
+        // Primary mux_key should still be 1
+        assert_eq!(adapter.mux_key(), 1);
     }
 
     #[test]
-    fn test_adapter_different_game_ids() {
-        // Test that different game names produce different IDs
-        let adapter1 = MuxRudpAdapter::bind("127.0.0.1:0", 0xe5).unwrap(); // kaos_io
-        let adapter2 = MuxRudpAdapter::bind("127.0.0.1:0", 0xdb).unwrap(); // kaos_asteroids
+    fn test_adapter_different_mux_keys() {
+        // Test that different mux_keys are tracked correctly
+        let adapter1 = MuxRudpAdapter::bind("127.0.0.1:0", 0x12345678).unwrap();
+        let adapter2 = MuxRudpAdapter::bind("127.0.0.1:0", 0xABCDEF00).unwrap();
 
-        assert_ne!(adapter1.game_id(), adapter2.game_id());
-        assert_eq!(adapter1.game_id(), 0xe5);
-        assert_eq!(adapter2.game_id(), 0xdb);
+        assert_ne!(adapter1.mux_key(), adapter2.mux_key());
+        assert_eq!(adapter1.mux_key(), 0x12345678);
+        assert_eq!(adapter2.mux_key(), 0xABCDEF00);
     }
 
     #[test]
     fn test_adapter_client_iteration() {
-        let adapter = MuxRudpAdapter::bind("127.0.0.1:0", 0x01).unwrap();
+        let adapter = MuxRudpAdapter::bind("127.0.0.1:0", 1).unwrap();
 
         // No clients initially
         let clients: Vec<_> = adapter.clients().collect();
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_adapter_receive_empty() {
-        let mut adapter = MuxRudpAdapter::bind("127.0.0.1:0", 0x01).unwrap();
+        let mut adapter = MuxRudpAdapter::bind("127.0.0.1:0", 1).unwrap();
         let fake_addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
 
         // No messages for non-existent client

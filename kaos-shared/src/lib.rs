@@ -43,6 +43,9 @@ mod header;
 pub use message_type::MessageType;
 pub use header::{PacketHeader, HEADER_SIZE};
 
+/// Multiplexing key size in bytes (u32 = 4 bytes)
+pub const MUX_KEY_SIZE: usize = 4;
+
 /// Re-export CRC32 utilities
 pub mod crc32 {
     pub use crc32fast::Hasher;

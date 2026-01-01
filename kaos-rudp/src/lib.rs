@@ -81,6 +81,8 @@ macro_rules! trace_warn { ($($arg:tt)*) => {} }
 
 // Core trait - all transports implement this
 pub use transport::{Archived, BatchTransport, Reliable, Transport};
+// Client-side transport with mux_key support
+pub use transport::{ClientTransport, ClientTransportConfig};
 
 #[cfg(feature = "archive")]
 pub use archived::{ArchivedError, ArchivedTransport};
@@ -90,7 +92,8 @@ pub use congestion::CongestionController as Congestion;
 pub use driver::DriverTransport;
 use kaos::{record_backpressure, record_receive, record_retransmit, record_send};
 pub use multicast::{MulticastSocket, MulticastTransport};
-pub use mux::{GameHandler, MuxRudpServer};
+pub use mux::{MuxHandler, MuxRudpServer};
+
 pub use mux_adapter::MuxRudpAdapter;
 pub use server::{RudpServer, RudpServerClient};
 use window::BitmapWindow;

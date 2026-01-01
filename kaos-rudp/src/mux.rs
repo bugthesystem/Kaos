@@ -1,15 +1,15 @@
-//! Game-ID Multiplexed RUDP Server
+//! Mux-Key Multiplexed RUDP Server
 //!
-//! Routes UDP packets to different game handlers based on a game_id byte prefix.
+//! Routes UDP packets to different game handlers based on a mux_key prefix (u32).
 //! This allows multiple games/services to share a single UDP port.
 //!
 //! ## Protocol
 //!
-//! Each packet has a 1-byte game_id prefix:
+//! Each packet has a 4-byte mux_key prefix:
 //! ```text
 //! +----------+------------------+
-//! | game_id  |    payload       |
-//! | (1 byte) | (RUDP protocol)  |
+//! | mux_key  |    payload       |
+//! | (4 bytes)| (RUDP protocol)  |
 //! +----------+------------------+
 //! ```
 //!
@@ -27,8 +27,8 @@
 //! }
 //!
 //! let mut server = MuxRudpServer::bind("0.0.0.0:7354")?;
-//! server.register(0x01, Box::new(AsteroidsHandler));
-//! server.register(0x02, Box::new(RacingHandler));
+//! server.register(0x00000001, Box::new(AsteroidsHandler));
+//! server.register(0x00000002, Box::new(RacingHandler));
 //!
 //! loop {
 //!     server.poll();
@@ -59,9 +59,13 @@ const DEFAULT_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Max receive buffer size
 const RECV_BUFFER_SIZE: usize = 65536;
 
-/// Game handler trait - implement this for each game type
-pub trait GameHandler: Send + Sync {
-    /// Called when a new client connects with this game_id
+/// Mux key size in bytes (u32 = 4 bytes)
+const MUX_KEY_SIZE: usize = 4;
+
+/// Handler trait for multiplexed connections.
+/// Implement this for each service/game type that shares the UDP port.
+pub trait MuxHandler: Send + Sync {
+    /// Called when a new client connects with this mux_key
     fn on_connect(&mut self, client: SocketAddr);
 
     /// Called when a message is received from a client
@@ -70,15 +74,19 @@ pub trait GameHandler: Send + Sync {
     /// Called when a client disconnects
     fn on_disconnect(&mut self, client: SocketAddr);
 
-    /// Called each tick (optional, for game logic)
+    /// Called each tick (optional, for periodic updates)
     fn on_tick(&mut self) {}
 }
+
+/// Backward compatibility alias
+#[deprecated(since = "2.0.0", note = "Use MuxHandler instead")]
+pub type GameHandler = dyn MuxHandler;
 
 /// Per-client state for multiplexed connections
 #[allow(dead_code)]
 struct MuxClientState {
-    /// Which game this client is connected to
-    game_id: u8,
+    /// Which game/service this client is connected to (mux_key)
+    mux_key: u32,
     /// Send window (MessageRingBuffer from kaos::disruptor)
     send_window: MessageRingBuffer,
     /// Receive window (BitmapWindow for ordered delivery)
@@ -102,7 +110,7 @@ struct MuxClientState {
 }
 
 impl MuxClientState {
-    fn new(addr: SocketAddr, game_id: u8, window_size: usize) -> io::Result<Self> {
+    fn new(addr: SocketAddr, mux_key: u32, window_size: usize) -> io::Result<Self> {
         let config = RingBufferConfig::new(window_size)
             .map_err(|e| io::Error::other(format!("Invalid window size: {}", e)))?
             .with_consumers(1)
@@ -114,7 +122,7 @@ impl MuxClientState {
         let nak_addr = SocketAddr::new(addr.ip(), addr.port().wrapping_add(1));
 
         Ok(Self {
-            game_id,
+            mux_key,
             send_window,
             recv_window: BitmapWindow::new(window_size, 0),
             congestion: CongestionController::new(64, window_size as u32),
@@ -137,7 +145,7 @@ impl MuxClientState {
     }
 }
 
-/// Multiplexed RUDP server - routes packets by game_id
+/// Multiplexed RUDP server - routes packets by mux_key
 pub struct MuxRudpServer {
     /// Main data socket
     socket: Arc<UdpSocket>,
@@ -145,8 +153,8 @@ pub struct MuxRudpServer {
     nak_socket: Arc<UdpSocket>,
     /// Per-client state (addr -> state)
     clients: HashMap<SocketAddr, MuxClientState>,
-    /// Game handlers (game_id -> handler)
-    handlers: HashMap<u8, Box<dyn GameHandler>>,
+    /// Mux handlers (mux_key -> handler)
+    handlers: HashMap<u32, Box<dyn MuxHandler>>,
     /// Server local address
     local_addr: SocketAddr,
     /// Window size for new clients
@@ -155,10 +163,10 @@ pub struct MuxRudpServer {
     client_timeout: Duration,
     /// Receive buffer (reused)
     recv_buffer: Vec<u8>,
-    /// Pending new clients (addr, game_id)
-    pending_accepts: Vec<(SocketAddr, u8)>,
+    /// Pending new clients (addr, mux_key)
+    pending_accepts: Vec<(SocketAddr, u32)>,
     /// Messages to deliver (collected during poll)
-    pending_messages: Vec<(u8, SocketAddr, Vec<u8>)>,
+    pending_messages: Vec<(u32, SocketAddr, Vec<u8>)>,
 }
 
 impl MuxRudpServer {
@@ -216,14 +224,14 @@ impl MuxRudpServer {
         })
     }
 
-    /// Register a game handler for a specific game_id
-    pub fn register(&mut self, game_id: u8, handler: Box<dyn GameHandler>) {
-        self.handlers.insert(game_id, handler);
+    /// Register a handler for a specific mux_key
+    pub fn register(&mut self, mux_key: u32, handler: Box<dyn MuxHandler>) {
+        self.handlers.insert(mux_key, handler);
     }
 
-    /// Unregister a game handler
-    pub fn unregister(&mut self, game_id: u8) -> Option<Box<dyn GameHandler>> {
-        self.handlers.remove(&game_id)
+    /// Unregister a handler
+    pub fn unregister(&mut self, mux_key: u32) -> Option<Box<dyn MuxHandler>> {
+        self.handlers.remove(&mux_key)
     }
 
     /// Set client timeout
@@ -241,11 +249,11 @@ impl MuxRudpServer {
         self.clients.len()
     }
 
-    /// Get clients for a specific game
-    pub fn clients_for_game(&self, game_id: u8) -> impl Iterator<Item = &SocketAddr> {
+    /// Get clients for a specific mux_key
+    pub fn clients_for_mux_key(&self, mux_key: u32) -> impl Iterator<Item = &SocketAddr> {
         self.clients
             .iter()
-            .filter(move |(_, state)| state.game_id == game_id)
+            .filter(move |(_, state)| state.mux_key == mux_key)
             .map(|(addr, _)| addr)
     }
 
@@ -272,8 +280,8 @@ impl MuxRudpServer {
         loop {
             match self.socket.recv_from(&mut self.recv_buffer) {
                 Ok((len, src_addr)) => {
-                    if len < 1 {
-                        continue; // Need at least game_id byte
+                    if len < MUX_KEY_SIZE {
+                        continue; // Need at least mux_key (4 bytes)
                     }
                     packets.push((src_addr, self.recv_buffer[..len].to_vec()));
                 }
@@ -288,27 +296,27 @@ impl MuxRudpServer {
         }
     }
 
-    /// Handle an incoming packet with game_id prefix
+    /// Handle an incoming packet with mux_key prefix (4 bytes)
     fn handle_packet(&mut self, src_addr: SocketAddr, data: Vec<u8>) {
-        if data.is_empty() {
+        if data.len() < MUX_KEY_SIZE {
             return;
         }
 
-        let game_id = data[0];
-        let payload = &data[1..];
+        let mux_key = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        let payload = &data[MUX_KEY_SIZE..];
 
-        // Check if this game_id is registered
-        if !self.handlers.contains_key(&game_id) {
-            // Unknown game_id - ignore
+        // Check if this mux_key is registered
+        if !self.handlers.contains_key(&mux_key) {
+            // Unknown mux_key - ignore
             return;
         }
 
         // Ensure client exists
         let is_new = !self.clients.contains_key(&src_addr);
         if is_new {
-            if let Ok(state) = MuxClientState::new(src_addr, game_id, self.window_size) {
+            if let Ok(state) = MuxClientState::new(src_addr, mux_key, self.window_size) {
                 self.clients.insert(src_addr, state);
-                self.pending_accepts.push((src_addr, game_id));
+                self.pending_accepts.push((src_addr, mux_key));
             } else {
                 return;
             }
@@ -316,8 +324,8 @@ impl MuxRudpServer {
 
         let client = self.clients.get_mut(&src_addr).unwrap();
 
-        // Verify game_id matches (client can't switch games)
-        if client.game_id != game_id {
+        // Verify mux_key matches (client can't switch games)
+        if client.mux_key != mux_key {
             return;
         }
 
@@ -484,19 +492,19 @@ impl MuxRudpServer {
     /// Cleanup timed out clients
     fn cleanup_timed_out(&mut self) {
         let timeout = self.client_timeout;
-        let mut disconnected: Vec<(u8, SocketAddr)> = Vec::new();
+        let mut disconnected: Vec<(u32, SocketAddr)> = Vec::new();
 
         self.clients.retain(|addr, client| {
             let timed_out = client.is_timed_out(timeout);
             if timed_out {
-                disconnected.push((client.game_id, *addr));
+                disconnected.push((client.mux_key, *addr));
             }
             !timed_out
         });
 
         // Notify handlers of disconnects
-        for (game_id, addr) in disconnected {
-            if let Some(handler) = self.handlers.get_mut(&game_id) {
+        for (mux_key, addr) in disconnected {
+            if let Some(handler) = self.handlers.get_mut(&mux_key) {
                 handler.on_disconnect(addr);
             }
         }
@@ -505,8 +513,8 @@ impl MuxRudpServer {
     /// Dispatch pending messages to handlers
     fn dispatch_messages(&mut self) {
         // Process new connections
-        for (addr, game_id) in self.pending_accepts.drain(..) {
-            if let Some(handler) = self.handlers.get_mut(&game_id) {
+        for (addr, mux_key) in self.pending_accepts.drain(..) {
+            if let Some(handler) = self.handlers.get_mut(&mux_key) {
                 handler.on_connect(addr);
             }
         }
@@ -515,10 +523,10 @@ impl MuxRudpServer {
         let client_addrs: Vec<SocketAddr> = self.clients.keys().copied().collect();
         for addr in client_addrs {
             if let Some(client) = self.clients.get_mut(&addr) {
-                let game_id = client.game_id;
+                let mux_key = client.mux_key;
                 client.recv_window.deliver_in_order_with(|data| {
                     self.pending_messages
-                        .push((game_id, addr, data.to_vec()));
+                        .push((mux_key, addr, data.to_vec()));
                 });
 
                 // Send NAKs for gaps
@@ -537,14 +545,14 @@ impl MuxRudpServer {
         }
 
         // Dispatch messages to handlers
-        for (game_id, addr, data) in self.pending_messages.drain(..) {
-            if let Some(handler) = self.handlers.get_mut(&game_id) {
+        for (mux_key, addr, data) in self.pending_messages.drain(..) {
+            if let Some(handler) = self.handlers.get_mut(&mux_key) {
                 handler.on_message(addr, &data);
             }
         }
     }
 
-    /// Send data to a client (with game_id prefix)
+    /// Send data to a client (with mux_key prefix)
     pub fn send(&mut self, client_addr: &SocketAddr, data: &[u8]) -> io::Result<u64> {
         let client = self
             .clients
@@ -565,18 +573,18 @@ impl MuxRudpServer {
             ));
         }
 
-        let game_id = client.game_id;
+        let mux_key = client.mux_key;
         let seq = client.next_send_seq;
         let mut header = ReliableUdpHeader::new(0, seq, MessageType::Data, data.len() as u16);
         header.calculate_checksum(data);
 
-        // Build packet with game_id prefix
-        let mut packet = Vec::with_capacity(1 + ReliableUdpHeader::SIZE + data.len());
-        packet.push(game_id);
+        // Build packet with mux_key prefix (4 bytes)
+        let mut packet = Vec::with_capacity(MUX_KEY_SIZE + ReliableUdpHeader::SIZE + data.len());
+        packet.extend_from_slice(&mux_key.to_le_bytes());
         packet.extend_from_slice(bytemuck::bytes_of(&header));
         packet.extend_from_slice(data);
 
-        // Store in send window (without game_id prefix for retransmit)
+        // Store in send window for retransmit
         if let Some((slot_seq, slots)) = client.send_window.try_claim_slots(1) {
             slots[0].set_sequence(slot_seq);
             slots[0].set_data(&packet);
@@ -596,12 +604,12 @@ impl MuxRudpServer {
         Ok(seq)
     }
 
-    /// Broadcast to all clients of a specific game
-    pub fn broadcast(&mut self, game_id: u8, data: &[u8]) -> usize {
+    /// Broadcast to all clients with a specific mux_key
+    pub fn broadcast(&mut self, mux_key: u32, data: &[u8]) -> usize {
         let addrs: Vec<SocketAddr> = self
             .clients
             .iter()
-            .filter(|(_, c)| c.game_id == game_id)
+            .filter(|(_, c)| c.mux_key == mux_key)
             .map(|(a, _)| *a)
             .collect();
 
@@ -617,7 +625,7 @@ impl MuxRudpServer {
     /// Disconnect a client
     pub fn disconnect(&mut self, client_addr: &SocketAddr) {
         if let Some(client) = self.clients.remove(client_addr) {
-            if let Some(handler) = self.handlers.get_mut(&client.game_id) {
+            if let Some(handler) = self.handlers.get_mut(&client.mux_key) {
                 handler.on_disconnect(*client_addr);
             }
         }
@@ -644,7 +652,7 @@ mod tests {
         }
     }
 
-    impl GameHandler for TestHandler {
+    impl MuxHandler for TestHandler {
         fn on_connect(&mut self, client: SocketAddr) {
             self.connects.push(client);
         }
@@ -668,18 +676,18 @@ mod tests {
     #[test]
     fn test_mux_server_register() {
         let mut server = MuxRudpServer::bind("127.0.0.1:0").unwrap();
-        server.register(0x01, Box::new(TestHandler::new()));
-        server.register(0x02, Box::new(TestHandler::new()));
+        server.register(0x00000001, Box::new(TestHandler::new()));
+        server.register(0x00000002, Box::new(TestHandler::new()));
 
         // Both should be registered
-        assert!(server.handlers.contains_key(&0x01));
-        assert!(server.handlers.contains_key(&0x02));
+        assert!(server.handlers.contains_key(&0x00000001));
+        assert!(server.handlers.contains_key(&0x00000002));
     }
 
     #[test]
     fn test_mux_server_poll_empty() {
         let mut server = MuxRudpServer::bind("127.0.0.1:0").unwrap();
-        server.register(0x01, Box::new(TestHandler::new()));
+        server.register(0x00000001, Box::new(TestHandler::new()));
         server.poll(); // Should not panic
         assert_eq!(server.client_count(), 0);
     }
