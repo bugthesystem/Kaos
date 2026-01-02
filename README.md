@@ -29,9 +29,10 @@ Kaos provides lock-free ring buffers for inter-thread, inter-process, and networ
 |-------|-------------|
 | **[kaos](./kaos)** | Lock-free ring buffers (SPSC, MPSC, SPMC, MPMC) |
 | **[kaos-ipc](./kaos-ipc)** | Shared memory IPC via mmap |
-| **[kaos-rudp](./kaos-rudp)** | Reliable UDP with NAK/ACK |
-| **[kaos-archive](./kaos-archive)** | Persistent message archive (sync + async) |
-| **[kaos-driver](./kaos-driver)** | Media driver for zero-syscall I/O |
+| **[kaos-rudp](./kaos-rudp)** | Reliable UDP with NAK/ACK, mux server |
+| **[kaos-archive](./kaos-archive)** | Persistent message archive |
+| **[kaos-driver](./kaos-driver)** | Media driver (IPC ↔ UDP bridge) |
+| **[kaos-shared](./kaos-shared)** | Shared protocol types |
 
 ## Features
 
@@ -47,7 +48,7 @@ Kaos provides lock-free ring buffers for inter-thread, inter-process, and networ
 | **Archive** | Persistent message storage | ✅ |
 | | Retransmission from disk | ✅ |
 | | Late joiner replay | ✅ |
-| **Linux** | sendmmsg/recvmmsg | ✅ |
+| **Linux** | sendmmsg/recvmmsg batch I/O | ✅ |
 | | io_uring | ✅ |
 | | AF_XDP kernel bypass | ⚠️ Nightly, needs real kernel |
 | | NUMA / thread affinity | ⚠️ Experimental |
@@ -92,18 +93,15 @@ See [PROFILING.md](./kaos/docs/PROFILING.md) for detailed guide.
 
 ## Performance
 
-Measured on Apple M1 Pro (actual `cargo bench` results).
+Measured on Apple M1 Pro (`cargo bench`).
 
-| Benchmark | M1 Pro |
-|-----------|--------|
-| Ring buffer (batch, 10M) | 2.2 G/s |
-| Ring buffer (per-event, 1B) | 425 M/s |
-| IPC single send (8B) | 147 M/s |
-| IPC sustained (100K) | 595 M/s |
-| RUDP (reliable UDP) | 3.5 M/s (vs Aeron 2.6 M/s) |
-| Archive (async) | 20 M/s ← **recommended** |
-| MmapArchive (unchecked) | 28 M/s |
-| Archive read (64B) | 35 ns |
+| Benchmark | Kaos | Aeron |
+|-----------|------|-------|
+| Ring buffer (batch) | 3.2-3.6 G/s | — |
+| IPC (8B messages) | 150 M/s | — |
+| RUDP (500K events) | 2.9-3.4 M/s | 3.5 M/s |
+| Driver mode (IPC→UDP) | 5-6.5 M/s | 3.5 M/s |
+| Archive write | 30 M/s | — |
 
 ```bash
 # Run benchmarks
