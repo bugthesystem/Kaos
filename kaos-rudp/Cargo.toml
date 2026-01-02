@@ -11,9 +11,12 @@ readme = "README.md"
 repository = "https://github.com/bugthesystem/kaos"
 
 [features]
-default = []
+default = ["mux"]
 driver = ["kaos-ipc"]
 archive = ["kaos-archive"]
+multicast = []
+mux = []
+full = ["driver", "archive", "multicast", "mux"]
 tracing = ["dep:tracing", "kaos/tracing"]
 tracy = ["tracing", "kaos/tracy"]
 

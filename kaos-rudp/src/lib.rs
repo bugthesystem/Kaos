@@ -60,8 +60,11 @@ pub mod archived;
 pub mod congestion;
 #[cfg(feature = "driver")]
 pub mod driver;
+#[cfg(feature = "multicast")]
 pub mod multicast;
+#[cfg(feature = "mux")]
 pub mod mux;
+#[cfg(feature = "mux")]
 pub mod mux_adapter;
 mod sendmmsg;
 // server.rs removed - use MuxRudpServer with mux_key=0 for single-game servers
