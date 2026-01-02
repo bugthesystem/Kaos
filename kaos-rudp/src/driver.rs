@@ -3,7 +3,7 @@
 //! Uses shared memory (kaos-ipc) instead of direct syscalls.
 //! Apps get zero-syscall messaging, driver handles network I/O.
 
-use kaos_ipc::{ Publisher, Subscriber };
+use kaos_ipc::{Publisher, Subscriber};
 use std::io;
 
 /// Default IPC path for app → driver messages
@@ -62,7 +62,10 @@ impl DriverTransport {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        Err(io::Error::new(io::ErrorKind::NotFound, "kaos-driver not running"))
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "kaos-driver not running",
+        ))
     }
 
     /// Send a u64 value (zero syscalls!)

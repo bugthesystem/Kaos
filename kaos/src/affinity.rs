@@ -11,12 +11,12 @@ use std::io;
 #[cfg(target_os = "linux")]
 pub fn pin_to_core(core_id: usize) -> io::Result<()> {
     use libc::{cpu_set_t, sched_setaffinity, CPU_SET, CPU_ZERO};
-    
+
     let mut set: cpu_set_t = unsafe { std::mem::zeroed() };
     unsafe {
         CPU_ZERO(&mut set);
         CPU_SET(core_id, &mut set);
-        
+
         if sched_setaffinity(0, std::mem::size_of::<cpu_set_t>(), &set) != 0 {
             return Err(io::Error::last_os_error());
         }
@@ -31,21 +31,24 @@ pub fn pin_to_numa_node(node: usize) -> io::Result<()> {
     let path = format!("/sys/devices/system/node/node{}/cpulist", node);
     let cpulist = std::fs::read_to_string(&path)
         .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "NUMA node not found"))?;
-    
+
     let cores = parse_cpulist(&cpulist)?;
     if cores.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "No CPUs in node"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "No CPUs in node",
+        ));
     }
-    
+
     use libc::{cpu_set_t, sched_setaffinity, CPU_SET, CPU_ZERO};
-    
+
     let mut set: cpu_set_t = unsafe { std::mem::zeroed() };
     unsafe {
         CPU_ZERO(&mut set);
         for core in cores {
             CPU_SET(core, &mut set);
         }
-        
+
         if sched_setaffinity(0, std::mem::size_of::<cpu_set_t>(), &set) != 0 {
             return Err(io::Error::last_os_error());
         }
@@ -65,7 +68,7 @@ pub fn current_numa_node() -> io::Result<usize> {
         }
         ret as usize
     };
-    
+
     // Map CPU to NUMA node via sysfs
     for node in 0..16 {
         let path = format!("/sys/devices/system/node/node{}/cpulist", node);
@@ -103,17 +106,20 @@ fn parse_cpulist(s: &str) -> io::Result<Vec<usize>> {
     for part in s.trim().split(',') {
         if part.contains('-') {
             let mut iter = part.split('-');
-            let start: usize = iter.next()
+            let start: usize = iter
+                .next()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad range"))?
                 .parse()
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad number"))?;
-            let end: usize = iter.next()
+            let end: usize = iter
+                .next()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad range"))?
                 .parse()
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad number"))?;
             result.extend(start..=end);
         } else if !part.is_empty() {
-            let cpu: usize = part.parse()
+            let cpu: usize = part
+                .parse()
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad number"))?;
             result.push(cpu);
         }
@@ -174,4 +180,3 @@ mod tests {
         assert!(node < 256); // Sanity check
     }
 }
-

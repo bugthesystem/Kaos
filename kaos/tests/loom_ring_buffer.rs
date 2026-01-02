@@ -413,23 +413,23 @@ mod loom_tests {
         loom::model(|| {
             // Simulates the available[] bitmap used in MpmcRingBuffer
             let bitmap = Arc::new(AtomicU64::new(0));
-            
+
             let b1 = bitmap.clone();
             let b2 = bitmap.clone();
-            
+
             // Producer 1: publishes slot 0 (XOR bit 0)
             let p1 = thread::spawn(move || {
                 b1.fetch_xor(1u64 << 0, Ordering::Release);
             });
-            
+
             // Producer 2: publishes slot 1 (XOR bit 1)
             let p2 = thread::spawn(move || {
                 b2.fetch_xor(1u64 << 1, Ordering::Release);
             });
-            
+
             p1.join().unwrap();
             p2.join().unwrap();
-            
+
             // Both bits must be set (XOR from 0 sets them)
             let final_val = bitmap.load(Ordering::Acquire);
             assert_eq!(final_val & 0b11, 0b11, "Both bits should be set");
@@ -442,29 +442,27 @@ mod loom_tests {
         loom::model(|| {
             let bitmap = Arc::new(AtomicU64::new(0));
             let expected_flag = 1u64; // After XOR, bit should flip to 1
-            
+
             let b_prod = bitmap.clone();
             let b_cons = bitmap.clone();
-            
+
             // Producer: XOR to publish
             let producer = thread::spawn(move || {
                 b_prod.fetch_xor(1u64 << 0, Ordering::Release);
             });
-            
+
             // Consumer: wait for bit to flip
-            let consumer = thread::spawn(move || {
-                loop {
-                    let val = b_cons.load(Ordering::Acquire);
-                    if (val & 1) == expected_flag {
-                        return val;
-                    }
-                    loom::thread::yield_now();
+            let consumer = thread::spawn(move || loop {
+                let val = b_cons.load(Ordering::Acquire);
+                if (val & 1) == expected_flag {
+                    return val;
                 }
+                loom::thread::yield_now();
             });
-            
+
             producer.join().unwrap();
             let result = consumer.join().unwrap();
-            
+
             assert_eq!(result & 1, expected_flag);
         });
     }

@@ -1,10 +1,10 @@
 //! Fast archive with SPSC ring buffer + background writer (30-34 M/s).
 
-use crate::{ ArchiveError, MmapArchive };
+use crate::{ArchiveError, MmapArchive};
 use std::path::Path;
-use std::sync::atomic::{ AtomicBool, AtomicU64, Ordering };
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::thread::{ self, JoinHandle };
+use std::thread::{self, JoinHandle};
 
 const RING_SIZE: usize = 65536;
 const RING_MASK: usize = RING_SIZE - 1;
@@ -21,7 +21,10 @@ struct Slot {
 
 impl Default for Slot {
     fn default() -> Self {
-        Self { len: 0, data: [0u8; MAX_MSG_SIZE] }
+        Self {
+            len: 0,
+            data: [0u8; MAX_MSG_SIZE],
+        }
     }
 }
 
@@ -57,9 +60,8 @@ impl Archive {
 
         let state_clone = state.clone();
         let handle = thread::spawn(move || {
-            let mut archive = MmapArchive::create(&path, capacity).expect(
-                "Failed to create archive"
-            );
+            let mut archive =
+                MmapArchive::create(&path, capacity).expect("Failed to create archive");
             let mut consumer = 0u64;
             let mut batch_buf: Vec<&[u8]> = Vec::with_capacity(64);
 
@@ -75,7 +77,8 @@ impl Archive {
                 let batch_size = ((producer - consumer) as usize).min(64);
                 for i in 0..batch_size {
                     let slot = unsafe {
-                        &*state_clone.ring
+                        &*state_clone
+                            .ring
                             .as_ptr()
                             .add(((consumer + (i as u64)) as usize) & RING_MASK)
                     };
@@ -92,24 +95,38 @@ impl Archive {
                 }
 
                 consumer += batch_size as u64;
-                state_clone.consumer_cursor.0.store(consumer, Ordering::Release);
+                state_clone
+                    .consumer_cursor
+                    .0
+                    .store(consumer, Ordering::Release);
             }
 
             // Drain remaining
             let producer = state_clone.producer_cursor.0.load(Ordering::Acquire);
             while consumer < producer {
                 let slot = unsafe {
-                    &*state_clone.ring.as_ptr().add((consumer as usize) & RING_MASK)
+                    &*state_clone
+                        .ring
+                        .as_ptr()
+                        .add((consumer as usize) & RING_MASK)
                 };
                 if slot.len > 0 {
                     let _ = archive.append_no_index(&slot.data[..slot.len as usize]);
                 }
                 consumer += 1;
             }
-            state_clone.consumer_cursor.0.store(consumer, Ordering::Release);
+            state_clone
+                .consumer_cursor
+                .0
+                .store(consumer, Ordering::Release);
         });
 
-        Ok(Self { state, local_cursor: 0, cached_consumer: 0, writer_handle: Some(handle) })
+        Ok(Self {
+            state,
+            local_cursor: 0,
+            cached_consumer: 0,
+            writer_handle: Some(handle),
+        })
     }
 
     #[inline(always)]
@@ -127,9 +144,11 @@ impl Archive {
         }
 
         let slot = unsafe {
-            &mut *(
-                self.state.ring.as_ptr().add((self.local_cursor as usize) & RING_MASK) as *mut Slot
-            )
+            &mut *(self
+                .state
+                .ring
+                .as_ptr()
+                .add((self.local_cursor as usize) & RING_MASK) as *mut Slot)
         };
         slot.len = data.len() as u16;
         unsafe {
@@ -157,7 +176,10 @@ impl Archive {
     }
 
     pub fn flush(&mut self) {
-        self.state.producer_cursor.0.store(self.local_cursor, Ordering::Release);
+        self.state
+            .producer_cursor
+            .0
+            .store(self.local_cursor, Ordering::Release);
         while self.state.consumer_cursor.0.load(Ordering::Acquire) < self.local_cursor {
             std::hint::spin_loop();
         }

@@ -18,3 +18,12 @@ harness = false
 [[bench]]
 name = "bench_trace_events"
 harness = false
+
+[[bench]]
+name = "bench_raw_ring"
+harness = false
+
+# Disabled - needs API update
+# [[bench]]
+# name = "bench_compare_integrity"
+# harness = false

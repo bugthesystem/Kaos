@@ -1,9 +1,7 @@
 //! sendmmsg/recvmmsg batch UDP I/O (Linux)
 //!
 //! 5-10x syscall reduction for bulk UDP.
-//! Note: These are prepared for future high-throughput optimization.
-
-#![allow(dead_code)]
+//! Used by RudpTransport for batch retransmit (sendmmsg) and batch receive (recvmmsg).
 
 use std::io;
 use std::net::SocketAddr;

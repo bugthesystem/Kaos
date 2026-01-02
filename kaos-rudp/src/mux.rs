@@ -47,8 +47,8 @@ use crate::header::{MessageType, ReliableUdpHeader};
 use crate::window::BitmapWindow;
 use kaos::disruptor::{MessageRingBuffer, RingBufferConfig, RingBufferEntry};
 
-/// Socket buffer size (8MB for high throughput)
-const SOCKET_BUFFER_SIZE: i32 = 8 * 1024 * 1024;
+/// Socket buffer size (2MB for reasonable throughput)
+const SOCKET_BUFFER_SIZE: i32 = 2 * 1024 * 1024;
 
 /// Default window size per client
 const DEFAULT_WINDOW_SIZE: usize = 256;
@@ -56,15 +56,50 @@ const DEFAULT_WINDOW_SIZE: usize = 256;
 /// Client timeout (30 seconds)
 const DEFAULT_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Max receive buffer size
-const RECV_BUFFER_SIZE: usize = 65536;
+/// Max receive buffer size (8KB - handles most game packets, larger need fragmentation)
+/// UDP max is 65535 but typical game packets are under MTU (1500 bytes)
+const RECV_BUFFER_SIZE: usize = 8192;
 
 /// Mux key size in bytes (u32 = 4 bytes)
 const MUX_KEY_SIZE: usize = 4;
 
+/// Max packets per poll batch (pre-allocated)
+const MAX_POLL_BATCH: usize = 64;
+
+/// Pooled buffer for zero-allocation packet handling
+struct PooledBuffer {
+    /// Pre-allocated buffers
+    buffers: Vec<Vec<u8>>,
+    /// Buffer lengths (valid data in each buffer)
+    lengths: Vec<usize>,
+    /// Source addresses
+    addrs: Vec<SocketAddr>,
+    /// Number of active packets
+    count: usize,
+}
+
+impl PooledBuffer {
+    fn new(capacity: usize, buffer_size: usize) -> Self {
+        Self {
+            buffers: (0..capacity).map(|_| vec![0u8; buffer_size]).collect(),
+            lengths: vec![0; capacity],
+            addrs: vec!["0.0.0.0:0".parse().unwrap(); capacity],
+            count: 0,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.count = 0;
+    }
+}
+
 /// Handler trait for multiplexed connections.
 /// Implement this for each service/game type that shares the UDP port.
-pub trait MuxHandler: Send + Sync {
+///
+/// Note: This trait does NOT require Send + Sync. MuxRudpServer is designed
+/// for single-threaded use - all handler callbacks are invoked synchronously
+/// during poll(). For multi-threaded scenarios, implement your own synchronization.
+pub trait MuxHandler {
     /// Called when a new client connects with this mux_key
     fn on_connect(&mut self, client: SocketAddr);
 
@@ -161,12 +196,15 @@ pub struct MuxRudpServer {
     window_size: usize,
     /// Client timeout
     client_timeout: Duration,
-    /// Receive buffer (reused)
-    recv_buffer: Vec<u8>,
+    /// Pre-allocated packet buffer pool (zero-allocation receive)
+    packet_pool: PooledBuffer,
     /// Pending new clients (addr, mux_key)
     pending_accepts: Vec<(SocketAddr, u32)>,
-    /// Messages to deliver (collected during poll)
-    pending_messages: Vec<(u32, SocketAddr, Vec<u8>)>,
+    /// Messages to deliver - pooled buffer indices instead of Vec<u8>
+    /// Format: (mux_key, addr, pool_index, length)
+    pending_message_indices: Vec<(u32, SocketAddr, usize, usize)>,
+    /// Message delivery pool (pre-allocated for dispatch)
+    message_pool: PooledBuffer,
 }
 
 impl MuxRudpServer {
@@ -218,9 +256,10 @@ impl MuxRudpServer {
             local_addr,
             window_size,
             client_timeout: DEFAULT_CLIENT_TIMEOUT,
-            recv_buffer: vec![0u8; RECV_BUFFER_SIZE],
+            packet_pool: PooledBuffer::new(MAX_POLL_BATCH, RECV_BUFFER_SIZE),
             pending_accepts: Vec::new(),
-            pending_messages: Vec::new(),
+            pending_message_indices: Vec::with_capacity(MAX_POLL_BATCH),
+            message_pool: PooledBuffer::new(MAX_POLL_BATCH * 4, RECV_BUFFER_SIZE),
         })
     }
 
@@ -272,32 +311,49 @@ impl MuxRudpServer {
         }
     }
 
-    /// Poll data socket for incoming packets
+    /// Poll data socket for incoming packets (zero-allocation)
     fn poll_data_socket(&mut self) {
-        // Collect packets first to avoid borrow issues
-        let mut packets: Vec<(SocketAddr, Vec<u8>)> = Vec::new();
+        // Clear the packet pool for this batch
+        self.packet_pool.clear();
 
+        // Receive into pre-allocated pool buffers
         loop {
-            match self.socket.recv_from(&mut self.recv_buffer) {
+            if self.packet_pool.count >= MAX_POLL_BATCH {
+                break; // Pool full
+            }
+            let idx = self.packet_pool.count;
+            match self.socket.recv_from(&mut self.packet_pool.buffers[idx]) {
                 Ok((len, src_addr)) => {
                     if len < MUX_KEY_SIZE {
                         continue; // Need at least mux_key (4 bytes)
                     }
-                    packets.push((src_addr, self.recv_buffer[..len].to_vec()));
+                    self.packet_pool.addrs[idx] = src_addr;
+                    self.packet_pool.lengths[idx] = len;
+                    self.packet_pool.count += 1;
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(_) => break,
             }
         }
 
-        // Process packets
-        for (src_addr, data) in packets {
-            self.handle_packet(src_addr, data);
+        // Process packets from pool
+        // We need to iterate by index to satisfy borrow checker
+        let count = self.packet_pool.count;
+        for i in 0..count {
+            let src_addr = self.packet_pool.addrs[i];
+            let len = self.packet_pool.lengths[i];
+            // Copy buffer pointer to stack before mutable borrow
+            // The buffer contents are valid for the duration of this loop
+            let buf_ptr = self.packet_pool.buffers[i].as_ptr();
+            // Safety: buf_ptr points to valid memory in packet_pool.buffers[i]
+            // which is not modified by handle_packet_ref
+            let data = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
+            self.handle_packet_ref(src_addr, data);
         }
     }
 
-    /// Handle an incoming packet with mux_key prefix (4 bytes)
-    fn handle_packet(&mut self, src_addr: SocketAddr, data: Vec<u8>) {
+    /// Handle an incoming packet with mux_key prefix (4 bytes) - zero-copy version
+    fn handle_packet_ref(&mut self, src_addr: SocketAddr, data: &[u8]) {
         if data.len() < MUX_KEY_SIZE {
             return;
         }
@@ -510,7 +566,7 @@ impl MuxRudpServer {
         }
     }
 
-    /// Dispatch pending messages to handlers
+    /// Dispatch pending messages to handlers (zero-allocation path)
     fn dispatch_messages(&mut self) {
         // Process new connections
         for (addr, mux_key) in self.pending_accepts.drain(..) {
@@ -519,14 +575,26 @@ impl MuxRudpServer {
             }
         }
 
-        // Collect messages from receive windows
+        // Clear message pool for this dispatch cycle
+        self.message_pool.clear();
+        self.pending_message_indices.clear();
+
+        // First pass: collect messages into pool (avoids borrow issues)
         let client_addrs: Vec<SocketAddr> = self.clients.keys().copied().collect();
         for addr in client_addrs {
             if let Some(client) = self.clients.get_mut(&addr) {
                 let mux_key = client.mux_key;
+
+                // Collect messages into pool
                 client.recv_window.deliver_in_order_with(|data| {
-                    self.pending_messages
-                        .push((mux_key, addr, data.to_vec()));
+                    let pool_idx = self.message_pool.count;
+                    if pool_idx < self.message_pool.buffers.len() && data.len() <= RECV_BUFFER_SIZE {
+                        self.message_pool.buffers[pool_idx][..data.len()].copy_from_slice(data);
+                        self.message_pool.lengths[pool_idx] = data.len();
+                        self.message_pool.count += 1;
+                        self.pending_message_indices
+                            .push((mux_key, addr, pool_idx, data.len()));
+                    }
                 });
 
                 // Send NAKs for gaps
@@ -544,10 +612,11 @@ impl MuxRudpServer {
             }
         }
 
-        // Dispatch messages to handlers
-        for (mux_key, addr, data) in self.pending_messages.drain(..) {
+        // Second pass: dispatch to handlers from pool (zero-copy)
+        for (mux_key, addr, pool_idx, len) in self.pending_message_indices.drain(..) {
             if let Some(handler) = self.handlers.get_mut(&mux_key) {
-                handler.on_message(addr, &data);
+                let data = &self.message_pool.buffers[pool_idx][..len];
+                handler.on_message(addr, data);
             }
         }
     }

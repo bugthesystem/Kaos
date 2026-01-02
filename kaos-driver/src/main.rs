@@ -101,11 +101,22 @@ fn main() {
 
     #[cfg(not(feature = "reliable"))]
     {
-        let socket = UdpSocket::bind(bind).expect("bind failed");
-        socket.set_nonblocking(true).unwrap();
-        if !echo {
-            socket.connect(peer).unwrap();
-        }
+        // Create socket with large buffers to prevent overflow
+        use socket2::{Domain, Protocol, Socket, Type};
+        let domain = if bind.is_ipv6() {
+            Domain::IPV6
+        } else {
+            Domain::IPV4
+        };
+        let socket2 = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        socket2.set_send_buffer_size(8 * 1024 * 1024).unwrap();
+        socket2.set_recv_buffer_size(8 * 1024 * 1024).unwrap();
+        socket2.set_nonblocking(true).unwrap();
+        socket2.bind(&bind.into()).expect("bind failed");
+        // In echo mode, connect to self for loopback
+        // Otherwise connect to peer for unicast
+        socket2.connect(&peer.into()).unwrap();
+        let socket: UdpSocket = socket2.into();
 
         #[cfg(all(target_os = "linux", feature = "uring"))]
         return run_uring(&socket, &mut from_app, &mut to_app, &running);
@@ -267,8 +278,9 @@ fn run_multicast_linux(
             last = Instant::now();
         }
 
+        // Busy-spin like Aeron's BusySpinIdleStrategy for max throughput
         if n_send == 0 && n <= 0 {
-            thread::yield_now();
+            std::hint::spin_loop();
         }
     }
     println!("done tx={} rx={}", sent, recvd);
@@ -330,8 +342,9 @@ fn run_multicast_portable(
             last = Instant::now();
         }
 
+        // Busy-spin like Aeron's BusySpinIdleStrategy for max throughput
         if batch.is_empty() {
-            thread::yield_now();
+            std::hint::spin_loop();
         }
     }
     println!("done tx={} rx={}", sent, recvd);
@@ -379,7 +392,8 @@ fn run_reliable(
             println!("  tx={} rx={}", sent, recvd);
             last = Instant::now();
         }
-        thread::yield_now();
+        // Busy-spin like Aeron's BusySpinIdleStrategy for max throughput
+        std::hint::spin_loop();
     }
     println!("done tx={} rx={}", sent, recvd);
 }
@@ -428,7 +442,8 @@ fn run_uring(
             println!("  tx={} rx={}", sent, recvd);
             last = Instant::now();
         }
-        thread::yield_now();
+        // Busy-spin like Aeron's BusySpinIdleStrategy for max throughput
+        std::hint::spin_loop();
     }
     println!("done tx={} rx={}", sent, recvd);
 }
@@ -502,7 +517,8 @@ fn run_linux(
             println!("  tx={} rx={}", sent, recvd);
             last = Instant::now();
         }
-        thread::yield_now();
+        // Busy-spin like Aeron's BusySpinIdleStrategy for max throughput
+        std::hint::spin_loop();
     }
     println!("done tx={} rx={}", sent, recvd);
 }
@@ -517,31 +533,53 @@ fn run_portable(
     from_app: &mut Subscriber,
     to_app: &mut Publisher,
     running: &Arc<AtomicBool>,
-    echo: bool,
+    _echo: bool,  // Socket already connected, echo handled by loopback
 ) {
     let mut buf = [0u8; 8];
     let (mut sent, mut recvd, mut last) = (0u64, 0u64, Instant::now());
 
+    // Pre-allocate send buffer for batching
+    let mut send_batch: Vec<u64> = Vec::with_capacity(BATCH_SIZE);
+
     while running.load(Ordering::Relaxed) {
-        while let Some(v) = from_app.try_receive() {
+        // Batch read from IPC (fast)
+        send_batch.clear();
+        while send_batch.len() < BATCH_SIZE {
+            if let Some(v) = from_app.try_receive() {
+                send_batch.push(v);
+            } else {
+                break;
+            }
+        }
+
+        // Send batch to UDP
+        for &v in &send_batch {
             if socket.send(&v.to_le_bytes()).is_ok() {
                 sent += 1;
             }
         }
-        if let Ok((len, src)) = socket.recv_from(&mut buf) {
-            if len >= 8 {
-                if echo {
-                    let _ = socket.send_to(&buf[..len], src);
+
+        // Receive from UDP (non-blocking)
+        loop {
+            match socket.recv(&mut buf) {
+                Ok(len) if len >= 8 => {
+                    let _ = to_app.send(u64::from_le_bytes(buf));
+                    recvd += 1;
                 }
-                let _ = to_app.send(u64::from_le_bytes(buf));
-                recvd += 1;
+                _ => break,
             }
         }
+
         if last.elapsed() > Duration::from_secs(5) {
             println!("  tx={} rx={}", sent, recvd);
             last = Instant::now();
         }
-        thread::yield_now();
+
+        // NO YIELD - busy spin like Aeron for maximum throughput
+        // Only hint to CPU when truly idle
+        if send_batch.is_empty() {
+            std::hint::spin_loop();
+        }
     }
     println!("done tx={} rx={}", sent, recvd);
 }

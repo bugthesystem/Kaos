@@ -3,18 +3,44 @@
 //! This module provides a `BitmapWindow` for managing the receive window,
 //! handling out-of-order packet arrival efficiently using a bitmap-based approach.
 
-/// Max packet size (64KB to support large game state payloads)
-/// Note: For memory efficiency with many slots, consider dynamic allocation
-/// if your use case typically has smaller packets.
-const MAX_PACKET_SIZE: usize = 65536;
+/// Max packet size (2KB default - sufficient for most game state payloads)
+/// Large packets (up to 64KB) are still supported via dynamic allocation.
+/// This is just the pre-allocated capacity hint.
+pub const DEFAULT_SLOT_CAPACITY: usize = 2048;
 
-#[repr(C, align(128))]
-#[derive(Clone, Copy)]
+/// Maximum supported packet size (64KB UDP limit)
+pub const MAX_PACKET_SIZE: usize = 65536;
+
+/// A slot in the receive window ring buffer.
+/// Uses dynamic allocation (Vec) instead of fixed 64KB arrays.
+/// Memory per slot: ~2KB typical vs 64KB with fixed arrays.
+#[repr(C, align(64))]
+#[derive(Clone)]
 pub struct ReliableWindowSlot {
     pub seq: u64,
     pub valid: bool,
-    pub data: [u8; MAX_PACKET_SIZE],
-    pub len: usize,
+    pub data: Vec<u8>,
+}
+
+impl ReliableWindowSlot {
+    /// Create a new slot with the given capacity hint.
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            seq: 0,
+            valid: false,
+            data: Vec::with_capacity(capacity),
+        }
+    }
+
+    /// Get the length of stored data.
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Check if slot is empty.
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
 }
 
 pub struct ReliableWindowRingBuffer {
@@ -25,16 +51,15 @@ pub struct ReliableWindowRingBuffer {
 
 impl ReliableWindowRingBuffer {
     pub fn new(window_size: usize, start_seq: u64) -> Self {
+        Self::with_capacity(window_size, start_seq, DEFAULT_SLOT_CAPACITY)
+    }
+
+    /// Create a new ring buffer with custom slot capacity.
+    pub fn with_capacity(window_size: usize, start_seq: u64, slot_capacity: usize) -> Self {
         Self {
-            slots: vec![
-                ReliableWindowSlot {
-                    seq: 0,
-                    valid: false,
-                    data: [0u8; MAX_PACKET_SIZE],
-                    len: 0,
-                };
-                window_size
-            ],
+            slots: (0..window_size)
+                .map(|_| ReliableWindowSlot::new(slot_capacity))
+                .collect(),
             next_expected_seq: start_seq,
             window_size,
         }
@@ -59,8 +84,10 @@ impl ReliableWindowRingBuffer {
             }
         }
         slot.seq = seq;
-        slot.len = data.len().min(MAX_PACKET_SIZE);
-        slot.data[..slot.len].copy_from_slice(&data[..slot.len]);
+        // Dynamic allocation - only allocate what we need (up to MAX_PACKET_SIZE)
+        let len = data.len().min(MAX_PACKET_SIZE);
+        slot.data.clear();
+        slot.data.extend_from_slice(&data[..len]);
         slot.valid = true;
         true
     }
@@ -70,8 +97,9 @@ impl ReliableWindowRingBuffer {
             let idx = (self.next_expected_seq % (self.window_size as u64)) as usize;
             let slot = &mut self.slots[idx];
             if slot.valid && slot.seq == self.next_expected_seq {
-                f(&slot.data[..slot.len]);
+                f(&slot.data);
                 slot.valid = false;
+                slot.data.clear(); // Free memory after delivery
                 self.next_expected_seq += 1;
             } else {
                 break;

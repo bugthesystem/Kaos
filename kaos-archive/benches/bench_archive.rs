@@ -96,7 +96,9 @@ fn bench_throughput(c: &mut Criterion) {
             let path = dir.path().join("bench");
             let mut archive = MmapArchive::create(&path, 1024 * 1024 * 1024).unwrap();
             for _ in 0..1_000_000 {
-                unsafe { black_box(archive.append_unchecked(&msg)); }
+                unsafe {
+                    black_box(archive.append_unchecked(&msg));
+                }
             }
         });
     });
@@ -108,7 +110,8 @@ fn bench_throughput(c: &mut Criterion) {
             let dir = tempdir().unwrap();
             let path = dir.path().join("bench");
             let mut archive = MmapArchive::create(&path, 1024 * 1024 * 1024).unwrap();
-            for _ in 0..15625 { // 1M / 64
+            for _ in 0..15625 {
+                // 1M / 64
                 black_box(archive.append_batch(&batch).unwrap());
             }
         });

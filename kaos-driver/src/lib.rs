@@ -6,4 +6,3 @@ pub mod xdp;
 
 #[cfg(all(target_os = "linux", feature = "uring"))]
 pub mod uring;
-

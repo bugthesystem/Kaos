@@ -2,10 +2,10 @@
 
 use crate::ArchiveError;
 use kaos::crc32::crc32_simd;
-use memmap2::{ MmapMut, MmapOptions };
-use std::fs::{ File, OpenOptions };
+use memmap2::{MmapMut, MmapOptions};
+use std::fs::{File, OpenOptions};
 use std::path::Path;
-use std::sync::atomic::{ AtomicU64, Ordering };
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[repr(C, align(64))]
 struct LogHeader {
@@ -70,7 +70,9 @@ impl MmapArchive {
         let header = unsafe { &mut *(log_mmap.as_mut_ptr() as *mut LogHeader) };
         header.magic = MAGIC;
         header.version = 1;
-        header.write_pos.store(HEADER_SIZE as u64, Ordering::Release);
+        header
+            .write_pos
+            .store(HEADER_SIZE as u64, Ordering::Release);
         header.msg_count.store(0, Ordering::Release);
 
         let log_base = log_mmap.as_mut_ptr();
@@ -97,7 +99,10 @@ impl MmapArchive {
     pub fn open<P: AsRef<Path>>(base_path: P) -> Result<Self, ArchiveError> {
         let base = base_path.as_ref();
 
-        let log_file = OpenOptions::new().read(true).write(true).open(base.with_extension("log"))?;
+        let log_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(base.with_extension("log"))?;
         let index_file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -255,16 +260,14 @@ impl MmapArchive {
             return Err(ArchiveError::InvalidSequence(seq));
         }
 
-        let entry = unsafe {
-            &*(self.index_mmap.as_ptr().add((seq as usize) * 16) as *const IndexEntry)
-        };
+        let entry =
+            unsafe { &*(self.index_mmap.as_ptr().add((seq as usize) * 16) as *const IndexEntry) };
         let offset = entry.offset as usize;
         let length = entry.length as usize;
         let data = &self.log_mmap[offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + length];
 
-        let checksum = u32::from_ne_bytes(
-            self.log_mmap[offset + 4..offset + 8].try_into().unwrap()
-        );
+        let checksum =
+            u32::from_ne_bytes(self.log_mmap[offset + 4..offset + 8].try_into().unwrap());
         if crc32_simd(data) != checksum {
             return Err(ArchiveError::Corrupted);
         }
@@ -278,14 +281,11 @@ impl MmapArchive {
             return Err(ArchiveError::InvalidSequence(seq));
         }
 
-        let entry = unsafe {
-            &*(self.index_mmap.as_ptr().add((seq as usize) * 16) as *const IndexEntry)
-        };
+        let entry =
+            unsafe { &*(self.index_mmap.as_ptr().add((seq as usize) * 16) as *const IndexEntry) };
         let offset = entry.offset as usize;
-        Ok(
-            &self.log_mmap
-                [offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + (entry.length as usize)]
-        )
+        Ok(&self.log_mmap
+            [offset + FRAME_HEADER_SIZE..offset + FRAME_HEADER_SIZE + (entry.length as usize)])
     }
 
     // ─── Read (unsafe) ───────────────────────────────────────────────────────
@@ -318,14 +318,17 @@ impl MmapArchive {
 
     fn sync_header(&mut self) {
         let header = unsafe { &mut *(self.log_mmap.as_mut_ptr() as *mut LogHeader) };
-        header.write_pos.store(self.write_pos as u64, Ordering::Relaxed);
+        header
+            .write_pos
+            .store(self.write_pos as u64, Ordering::Relaxed);
         header.msg_count.store(self.msg_count, Ordering::Release);
     }
 
     /// Replay messages in range [from, to) calling handler for each.
     /// Returns number of messages replayed.
     pub fn replay<F>(&self, from: u64, to: u64, mut handler: F) -> Result<u64, ArchiveError>
-        where F: FnMut(u64, &[u8])
+    where
+        F: FnMut(u64, &[u8]),
     {
         let end = to.min(self.msg_count);
         if from >= end {

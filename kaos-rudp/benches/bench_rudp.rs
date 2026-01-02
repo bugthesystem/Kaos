@@ -23,8 +23,7 @@ fn run_rudp_bench(total_events: u64) -> (f64, u64) {
     let recv_cnt = received_count.clone();
 
     let receiver = thread::spawn(move || {
-        let mut transport =
-            RudpTransport::new(server_addr, client_addr, 65536).unwrap();
+        let mut transport = RudpTransport::new(server_addr, client_addr, 65536).unwrap();
         let mut count = 0u64;
         while count < total_events {
             transport.receive_batch_with(64, |data| {
@@ -39,8 +38,7 @@ fn run_rudp_bench(total_events: u64) -> (f64, u64) {
     thread::sleep(std::time::Duration::from_millis(10));
     let start = Instant::now();
 
-    let mut transport =
-        RudpTransport::new(client_addr, server_addr, 65536).unwrap();
+    let mut transport = RudpTransport::new(client_addr, server_addr, 65536).unwrap();
     let mut batch_data: [[u8; 8]; 16] = [[0u8; 8]; 16];
     let mut sent = 0u64;
 

@@ -86,8 +86,8 @@ fn main() {
     let send_path = "/tmp/kaos-send";
     let recv_path = "/tmp/kaos-recv";
 
-    // Clean up old files
-    let _ = fs::remove_file(send_path);
+    // IMPORTANT: Don't delete files if driver is waiting on them!
+    // Only delete recv_path (driver creates this after we create send_path)
     let _ = fs::remove_file(recv_path);
 
     // Create send ring (driver will detect this)
@@ -126,7 +126,7 @@ fn main() {
     };
 
     // Send messages and measure
-    const N: u64 = 100_000;
+    const N: u64 = 500_000;  // Same as Aeron benchmark
     println!("   Sending {} messages through network...", N);
 
     let start = Instant::now();

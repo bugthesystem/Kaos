@@ -399,14 +399,8 @@ mod tests {
         let archive_path = dir.path().join("archive");
         let (local, remote) = next_port_pair();
 
-        let mut transport = ArchivedTransport::new(
-            local,
-            remote,
-            1024,
-            &archive_path,
-            1024 * 1024,
-        )
-        .unwrap();
+        let mut transport =
+            ArchivedTransport::new(local, remote, 1024, &archive_path, 1024 * 1024).unwrap();
 
         for i in 0..20 {
             let _ = transport.send(format!("tap-msg-{}", i).as_bytes());
@@ -425,14 +419,8 @@ mod tests {
         let archive_path = dir.path().join("perf");
         let (local, remote) = next_port_pair();
 
-        let mut transport = ArchivedTransport::new(
-            local,
-            remote,
-            8192,
-            &archive_path,
-            64 * 1024 * 1024,
-        )
-        .unwrap();
+        let mut transport =
+            ArchivedTransport::new(local, remote, 8192, &archive_path, 64 * 1024 * 1024).unwrap();
 
         let msg = vec![0u8; 64];
         let count = 10_000;
@@ -477,14 +465,8 @@ mod tests {
         receiver.set_nonblocking(true).unwrap();
 
         // Sender with archive - sends TO the receiver
-        let mut sender = ArchivedTransport::new(
-            send_addr,
-            recv_addr,
-            1024,
-            &archive_path,
-            1024 * 1024,
-        )
-        .unwrap();
+        let mut sender =
+            ArchivedTransport::new(send_addr, recv_addr, 1024, &archive_path, 1024 * 1024).unwrap();
 
         // Send messages
         for i in 0..10 {
@@ -509,7 +491,10 @@ mod tests {
         let packet = &buf[..n];
         assert!(packet.len() > FastHeader::SIZE);
         let payload = &packet[FastHeader::SIZE..];
-        assert_eq!(payload, b"msg-5", "Retransmit should contain correct message");
+        assert_eq!(
+            payload, b"msg-5",
+            "Retransmit should contain correct message"
+        );
     }
 
     #[test]

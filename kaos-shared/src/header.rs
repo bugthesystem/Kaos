@@ -1,8 +1,8 @@
 //! RUDP packet header.
 
-use bytemuck::{Pod, Zeroable};
-use crate::MessageType;
 use crate::crc32::{crc32, crc32_incremental};
+use crate::MessageType;
+use bytemuck::{Pod, Zeroable};
 
 /// RUDP packet header size in bytes.
 pub const HEADER_SIZE: usize = 24;

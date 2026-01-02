@@ -30,10 +30,11 @@
 //! }
 //! ```
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
 
 use crate::mux::{MuxHandler, MuxRudpServer};
 
@@ -45,34 +46,34 @@ enum MuxEvent {
     Disconnect(SocketAddr),
 }
 
-/// Internal handler that collects events into a queue
+/// Internal handler that collects events into a queue (lock-free, single-threaded).
+///
+/// Uses RefCell for zero-overhead interior mutability. This is safe because
+/// MuxRudpServer callbacks are invoked synchronously during poll() - there's
+/// no concurrent access.
 struct QueuedGameHandler {
-    events: Arc<Mutex<Vec<MuxEvent>>>,
+    events: Rc<RefCell<Vec<MuxEvent>>>,
 }
 
 impl QueuedGameHandler {
-    fn new(events: Arc<Mutex<Vec<MuxEvent>>>) -> Self {
+    fn new(events: Rc<RefCell<Vec<MuxEvent>>>) -> Self {
         Self { events }
     }
 }
 
 impl MuxHandler for QueuedGameHandler {
     fn on_connect(&mut self, client: SocketAddr) {
-        if let Ok(mut events) = self.events.lock() {
-            events.push(MuxEvent::Connect(client));
-        }
+        self.events.borrow_mut().push(MuxEvent::Connect(client));
     }
 
     fn on_message(&mut self, client: SocketAddr, data: &[u8]) {
-        if let Ok(mut events) = self.events.lock() {
-            events.push(MuxEvent::Message(client, data.to_vec()));
-        }
+        self.events
+            .borrow_mut()
+            .push(MuxEvent::Message(client, data.to_vec()));
     }
 
     fn on_disconnect(&mut self, client: SocketAddr) {
-        if let Ok(mut events) = self.events.lock() {
-            events.push(MuxEvent::Disconnect(client));
-        }
+        self.events.borrow_mut().push(MuxEvent::Disconnect(client));
     }
 }
 
@@ -80,10 +81,14 @@ impl MuxHandler for QueuedGameHandler {
 ///
 /// This allows existing game servers to use MuxRudpServer without changing
 /// their poll-based architecture.
+///
+/// **Lock-free Design**: Uses `Rc<RefCell>` instead of `Arc<Mutex>` since
+/// all operations are single-threaded. Zero synchronization overhead.
 pub struct MuxRudpAdapter {
     server: MuxRudpServer,
     mux_key: u32,
-    events: Arc<Mutex<Vec<MuxEvent>>>,
+    /// Event queue (lock-free RefCell)
+    events: Rc<RefCell<Vec<MuxEvent>>>,
     /// Pending new clients
     pending_accepts: Vec<SocketAddr>,
     /// Per-client message queues
@@ -107,18 +112,22 @@ impl MuxRudpAdapter {
         window_size: usize,
     ) -> io::Result<Self> {
         let mut server = MuxRudpServer::bind_with_window(addr, window_size)?;
-        let events = Arc::new(Mutex::new(Vec::new()));
+        // Pre-allocate event queue
+        let events = Rc::new(RefCell::new(Vec::with_capacity(256)));
 
         // Register handler for this mux_key
-        server.register(mux_key, Box::new(QueuedGameHandler::new(Arc::clone(&events))));
+        server.register(
+            mux_key,
+            Box::new(QueuedGameHandler::new(Rc::clone(&events))),
+        );
 
         Ok(Self {
             server,
             mux_key,
             events,
-            pending_accepts: Vec::new(),
-            client_messages: HashMap::new(),
-            clients: Vec::new(),
+            pending_accepts: Vec::with_capacity(64),
+            client_messages: HashMap::with_capacity(64),
+            clients: Vec::with_capacity(64),
         })
     }
 
@@ -159,11 +168,8 @@ impl MuxRudpAdapter {
         // Poll the underlying MuxRudpServer
         self.server.poll();
 
-        // Process collected events
-        let events: Vec<MuxEvent> = {
-            let mut events_guard = self.events.lock().unwrap();
-            std::mem::take(&mut *events_guard)
-        };
+        // Process collected events (zero-overhead take with RefCell)
+        let events: Vec<MuxEvent> = std::mem::take(&mut *self.events.borrow_mut());
 
         for event in events {
             match event {

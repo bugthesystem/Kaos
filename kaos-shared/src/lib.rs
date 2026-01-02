@@ -37,11 +37,11 @@
 //! assert_eq!(bytes.len(), HEADER_SIZE);
 //! ```
 
-mod message_type;
 mod header;
+mod message_type;
 
-pub use message_type::MessageType;
 pub use header::{PacketHeader, HEADER_SIZE};
+pub use message_type::MessageType;
 
 /// Multiplexing key size in bytes (u32 = 4 bytes)
 pub const MUX_KEY_SIZE: usize = 4;

@@ -102,4 +102,3 @@ impl ReliableUdpHeader {
         temp.checksum == self.checksum
     }
 }
-

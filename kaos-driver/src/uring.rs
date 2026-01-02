@@ -99,7 +99,7 @@ mod tests {
     fn test_uring_driver_create() {
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         let driver = UringDriver::new(&socket);
-        
+
         // io_uring may fail if kernel doesn't support SQPOLL (needs root)
         // or if kernel version < 5.6
         match driver {
@@ -119,7 +119,7 @@ mod tests {
         let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
         let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
         let recv_addr = receiver.local_addr().unwrap();
-        
+
         sender.connect(recv_addr).unwrap();
         receiver.set_nonblocking(true).unwrap();
 
@@ -134,7 +134,7 @@ mod tests {
         // Submit sends
         let data: Vec<[u8; 8]> = (0..10).map(|i| [i as u8; 8]).collect();
         let submitted = driver.submit_sends(&data).unwrap();
-        
+
         assert!(submitted > 0, "Should submit at least one send");
         println!("io_uring: submitted {} sends", submitted);
 

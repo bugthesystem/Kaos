@@ -3,7 +3,7 @@
 //! Enables layered transports: `Archived<Reliable<Udp>>`, `Driver<Reliable<Udp>>`, etc.
 
 use std::io;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
 use kaos_shared::{MessageType, PacketHeader, HEADER_SIZE, MUX_KEY_SIZE};
@@ -79,16 +79,16 @@ impl Default for ClientTransportConfig {
 /// # Example
 ///
 /// ```rust,no_run
-/// use kaos_rudp::transport::{ClientTransport, ClientTransportConfig};
+/// use kaos_rudp::{ClientTransport, ClientTransportConfig, Transport};
 /// use std::net::SocketAddr;
 ///
 /// let peer: SocketAddr = "127.0.0.1:7354".parse().unwrap();
 /// let mut transport = ClientTransport::connect(peer).unwrap();
 ///
-/// // Send data
+/// // Send data (via Transport trait)
 /// transport.send(b"hello").unwrap();
 ///
-/// // Receive data
+/// // Receive data (via Transport trait)
 /// transport.receive(|data| {
 ///     println!("Received: {:?}", data);
 /// });
@@ -106,6 +106,8 @@ pub struct ClientTransport {
     recv_buffer: Vec<u8>,
     /// Mux key for multiplexed servers (prepended to each packet)
     mux_key: Option<u32>,
+    /// Connection state
+    connected: bool,
 }
 
 impl ClientTransport {
@@ -130,20 +132,57 @@ impl ClientTransport {
     }
 
     /// Connect with custom configuration
-    pub fn connect_with_config(config: ClientTransportConfig) -> io::Result<Self> {
-        let socket = UdpSocket::bind(config.bind_addr)?;
+    pub fn connect_with_config(mut config: ClientTransportConfig) -> io::Result<Self> {
+        // Ensure bind_addr uses the same IP version as peer_addr (IPv4/IPv6 matching)
+        if config.bind_addr.ip().is_unspecified() {
+            config.bind_addr = match config.peer_addr.ip() {
+                IpAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+                IpAddr::V6(_) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+            };
+        }
+
+        eprintln!("[RUDP] Server address: {}", config.peer_addr);
+        eprintln!("[RUDP] Binding main socket to: {}", config.bind_addr);
+
+        let socket = UdpSocket::bind(config.bind_addr).map_err(|e| {
+            eprintln!("[RUDP] Main socket bind FAILED: {}", e);
+            e
+        })?;
         socket.set_nonblocking(true)?;
         socket.set_read_timeout(config.read_timeout)?;
         socket.set_write_timeout(config.write_timeout)?;
 
         // Create NAK socket on local port + 1 for control messages
+        // If port+1 is in use, let OS pick an available port (fallback)
         let local_addr = socket.local_addr()?;
+        eprintln!("[RUDP] Main socket bound to: {}", local_addr);
         let nak_bind_addr = SocketAddr::new(local_addr.ip(), local_addr.port().wrapping_add(1));
-        let nak_socket = UdpSocket::bind(nak_bind_addr)?;
+        eprintln!("[RUDP] Binding NAK socket to: {}", nak_bind_addr);
+
+        let nak_socket = match UdpSocket::bind(nak_bind_addr) {
+            Ok(s) => {
+                eprintln!("[RUDP] NAK socket bound successfully");
+                s
+            }
+            Err(e) => {
+                eprintln!("[RUDP] NAK socket bind failed ({}), trying fallback...", e);
+                // Port+1 in use, let OS pick any available port
+                let fallback_addr = SocketAddr::new(local_addr.ip(), 0);
+                UdpSocket::bind(fallback_addr).map_err(|e2| {
+                    eprintln!("[RUDP] Fallback NAK socket bind FAILED: {}", e2);
+                    e2
+                })?
+            }
+        };
+        let nak_local = nak_socket.local_addr()?;
+        eprintln!("[RUDP] NAK socket bound to: {}", nak_local);
         nak_socket.set_nonblocking(true)?;
 
         // Peer's NAK address is peer port + 1
-        let peer_nak_addr = SocketAddr::new(config.peer_addr.ip(), config.peer_addr.port().wrapping_add(1));
+        let peer_nak_addr = SocketAddr::new(
+            config.peer_addr.ip(),
+            config.peer_addr.port().wrapping_add(1),
+        );
 
         let mut transport = Self {
             socket,
@@ -153,10 +192,12 @@ impl ClientTransport {
             sequence: 0,
             recv_buffer: vec![0u8; 65536],
             mux_key: config.mux_key,
+            connected: false,
         };
 
         // Send handshake
         transport.send_handshake()?;
+        transport.connected = true;
 
         Ok(transport)
     }
@@ -168,8 +209,22 @@ impl ClientTransport {
         let header_bytes = header.to_bytes();
 
         let packet = self.prepend_mux_key(&header_bytes);
-        self.socket.send_to(&packet, self.peer_addr)?;
-        Ok(())
+        eprintln!("[RUDP] Sending handshake to: {}", self.peer_addr);
+        match self.socket.send_to(&packet, self.peer_addr) {
+            Ok(n) => {
+                eprintln!("[RUDP] Handshake sent ({} bytes)", n);
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("[RUDP] Handshake send_to FAILED: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Check if connected
+    pub fn is_connected(&self) -> bool {
+        self.connected
     }
 
     /// Send raw data with RUDP header
@@ -253,7 +308,11 @@ impl ClientTransport {
     // Helper: calculate mux prefix length
     #[inline]
     fn mux_prefix_len(&self) -> usize {
-        if self.mux_key.is_some() { MUX_KEY_SIZE } else { 0 }
+        if self.mux_key.is_some() {
+            MUX_KEY_SIZE
+        } else {
+            0
+        }
     }
 
     // Helper: prepend mux_key to data if in mux mode
