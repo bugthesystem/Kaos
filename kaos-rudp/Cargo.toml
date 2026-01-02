@@ -51,3 +51,15 @@ name = "example_reliable_udp_server"
 
 [[example]]
 name = "example_reliable_udp_client"
+
+[[example]]
+name = "multicast"
+required-features = ["multicast"]
+
+[[example]]
+name = "multicast_bench"
+required-features = ["multicast"]
+
+[[example]]
+name = "bench_driver"
+required-features = ["driver"]

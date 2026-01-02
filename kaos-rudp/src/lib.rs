@@ -99,9 +99,11 @@ pub use congestion::CongestionController as Congestion;
 #[cfg(feature = "driver")]
 pub use driver::DriverTransport;
 use kaos::{record_backpressure, record_receive, record_retransmit, record_send};
+#[cfg(feature = "multicast")]
 pub use multicast::{MulticastSocket, MulticastTransport};
+#[cfg(feature = "mux")]
 pub use mux::{MuxHandler, MuxRudpServer};
-
+#[cfg(feature = "mux")]
 pub use mux_adapter::MuxRudpAdapter;
 // RudpServer removed - use MuxRudpServer/MuxRudpAdapter instead
 use window::BitmapWindow;
