@@ -750,9 +750,25 @@ impl RudpTransport {
         // Safety: fd is valid, batch_receiver buffers are properly sized
         let received = unsafe { self.batch_receiver.recv_batch(fd) }.unwrap_or(0);
 
-        for i in 0..received.min(max_recv) {
-            let data = self.batch_receiver.packet(i);
-            self.parse_and_insert_packet(data);
+        // Copy packet lengths first to avoid borrow conflict with parse_and_insert_packet(&mut self)
+        // We use a stack-allocated array for the lengths, then process packets one by one
+        let count = received.min(max_recv);
+        let mut packet_lens = [0usize; 64];
+        for i in 0..count {
+            packet_lens[i] = self.batch_receiver.packet(i).len();
+        }
+
+        // Now process each packet - we re-borrow batch_receiver for each one
+        for i in 0..count {
+            let len = packet_lens[i];
+            if len > 0 {
+                // Copy packet data to stack buffer to release borrow
+                let mut buf = [0u8; 2048];
+                let data = self.batch_receiver.packet(i);
+                let copy_len = len.min(buf.len());
+                buf[..copy_len].copy_from_slice(&data[..copy_len]);
+                self.parse_and_insert_packet(&buf[..copy_len]);
+            }
         }
 
         self.recv_window.deliver_in_order_with(|msg| {
