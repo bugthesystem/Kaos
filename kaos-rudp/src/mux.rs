@@ -588,7 +588,8 @@ impl MuxRudpServer {
                 // Collect messages into pool
                 client.recv_window.deliver_in_order_with(|data| {
                     let pool_idx = self.message_pool.count;
-                    if pool_idx < self.message_pool.buffers.len() && data.len() <= RECV_BUFFER_SIZE {
+                    if pool_idx < self.message_pool.buffers.len() && data.len() <= RECV_BUFFER_SIZE
+                    {
                         self.message_pool.buffers[pool_idx][..data.len()].copy_from_slice(data);
                         self.message_pool.lengths[pool_idx] = data.len();
                         self.message_pool.count += 1;

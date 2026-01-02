@@ -622,7 +622,10 @@ impl RudpTransport {
         // Use sendmmsg for batch retransmit
         let fd = self.socket.as_raw_fd();
         // Safety: fd is valid, packets contains valid slices, remote_addr is valid
-        let _ = unsafe { self.batch_sender.send_batch(fd, &packets, &self.remote_addr) };
+        let _ = unsafe {
+            self.batch_sender
+                .send_batch(fd, &packets, &self.remote_addr)
+        };
     }
 
     /// Retransmit a batch of lost packets (on batch NAK)

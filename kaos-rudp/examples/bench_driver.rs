@@ -126,7 +126,7 @@ fn main() {
     };
 
     // Send messages and measure
-    const N: u64 = 500_000;  // Same as Aeron benchmark
+    const N: u64 = 500_000; // Same as Aeron benchmark
     println!("   Sending {} messages through network...", N);
 
     let start = Instant::now();

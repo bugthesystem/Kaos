@@ -533,7 +533,7 @@ fn run_portable(
     from_app: &mut Subscriber,
     to_app: &mut Publisher,
     running: &Arc<AtomicBool>,
-    _echo: bool,  // Socket already connected, echo handled by loopback
+    _echo: bool, // Socket already connected, echo handled by loopback
 ) {
     let mut buf = [0u8; 8];
     let (mut sent, mut recvd, mut last) = (0u64, 0u64, Instant::now());
