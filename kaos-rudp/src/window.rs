@@ -33,11 +33,13 @@ impl ReliableWindowSlot {
     }
 
     /// Get the length of stored data.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
     /// Check if slot is empty.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }

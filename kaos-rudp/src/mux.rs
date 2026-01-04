@@ -16,11 +16,11 @@
 //! ## Example
 //!
 //! ```rust,ignore
-//! use kaos_rudp::{MuxRudpServer, GameHandler};
+//! use kaos_rudp::{MuxRudpServer, MuxHandler};
 //!
 //! // Define game handlers
 //! struct AsteroidsHandler;
-//! impl GameHandler for AsteroidsHandler {
+//! impl MuxHandler for AsteroidsHandler {
 //!     fn on_connect(&mut self, client: SocketAddr) { }
 //!     fn on_message(&mut self, client: SocketAddr, data: &[u8]) { }
 //!     fn on_disconnect(&mut self, client: SocketAddr) { }
@@ -112,10 +112,6 @@ pub trait MuxHandler {
     /// Called each tick (optional, for periodic updates)
     fn on_tick(&mut self) {}
 }
-
-/// Backward compatibility alias
-#[deprecated(since = "2.0.0", note = "Use MuxHandler instead")]
-pub type GameHandler = dyn MuxHandler;
 
 /// Per-client state for multiplexed connections
 #[allow(dead_code)]
