@@ -6,6 +6,9 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
+/// Socket buffer size for client transports (4MB for high throughput)
+const CLIENT_SOCKET_BUFFER_SIZE: i32 = 4 * 1024 * 1024;
+
 use kaos_shared::{MessageType, PacketHeader, HEADER_SIZE, MUX_KEY_SIZE};
 
 /// Core transport trait - all transports implement this
@@ -151,6 +154,30 @@ impl ClientTransport {
         socket.set_nonblocking(true)?;
         socket.set_read_timeout(config.read_timeout)?;
         socket.set_write_timeout(config.write_timeout)?;
+
+        // Set large socket buffers for high throughput
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let fd = socket.as_raw_fd();
+            let buffer_size = CLIENT_SOCKET_BUFFER_SIZE;
+            unsafe {
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_SNDBUF,
+                    &buffer_size as *const i32 as *const libc::c_void,
+                    std::mem::size_of::<i32>() as u32,
+                );
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_RCVBUF,
+                    &buffer_size as *const i32 as *const libc::c_void,
+                    std::mem::size_of::<i32>() as u32,
+                );
+            }
+        }
 
         // Create NAK socket on local port + 1 for control messages
         // If port+1 is in use, let OS pick an available port (fallback)

@@ -47,8 +47,8 @@ use crate::header::{MessageType, ReliableUdpHeader};
 use crate::window::BitmapWindow;
 use kaos::disruptor::{MessageRingBuffer, RingBufferConfig, RingBufferEntry};
 
-/// Socket buffer size (2MB for reasonable throughput)
-const SOCKET_BUFFER_SIZE: i32 = 2 * 1024 * 1024;
+/// Socket buffer size (4MB for high-throughput with 1000+ clients)
+const SOCKET_BUFFER_SIZE: i32 = 4 * 1024 * 1024;
 
 /// Default window size per client
 const DEFAULT_WINDOW_SIZE: usize = 256;
@@ -671,7 +671,58 @@ impl MuxRudpServer {
     }
 
     /// Broadcast to all clients with a specific mux_key
+    ///
+    /// Uses unreliable delivery - ideal for real-time game state
+    /// that gets replaced every tick. For reliable delivery (chat, events),
+    /// use `broadcast_reliable()`.
+    ///
+    /// This is the standard pattern used by Nakama, Photon, Mirror, etc:
+    /// - State sync: Unreliable (positions, rotations refresh every frame)
+    /// - Events/RPCs: Reliable (chat, match events must arrive)
     pub fn broadcast(&mut self, mux_key: u32, data: &[u8]) -> usize {
+        self.broadcast_unreliable(mux_key, data)
+    }
+
+    /// Unreliable broadcast - fire-and-forget, no retransmit buffer
+    ///
+    /// Benefits for long-running games:
+    /// - No send window saturation (constant memory)
+    /// - No ACK overhead (2000 clients = 2000 fewer ACKs/tick)
+    /// - Stale data is discarded, not retransmitted
+    pub fn broadcast_unreliable(&mut self, mux_key: u32, data: &[u8]) -> usize {
+        let clients_data: Vec<(SocketAddr, u32, u64)> = self
+            .clients
+            .iter_mut()
+            .filter(|(_, c)| c.mux_key == mux_key && c.open)
+            .map(|(a, c)| {
+                let seq = c.next_send_seq;
+                c.next_send_seq = seq.wrapping_add(1);
+                (*a, c.mux_key, seq)
+            })
+            .collect();
+
+        let mut sent = 0;
+        for (addr, client_mux_key, seq) in clients_data {
+            // Build packet without storing in send window (unreliable)
+            let mut header = ReliableUdpHeader::new(0, seq, MessageType::Data, data.len() as u16);
+            header.calculate_checksum(data);
+
+            let mut packet = Vec::with_capacity(MUX_KEY_SIZE + ReliableUdpHeader::SIZE + data.len());
+            packet.extend_from_slice(&client_mux_key.to_le_bytes());
+            packet.extend_from_slice(bytemuck::bytes_of(&header));
+            packet.extend_from_slice(data);
+
+            // Send without retry - if it fails, next tick will send fresh data
+            if self.socket.send_to(&packet, addr).is_ok() {
+                sent += 1;
+            }
+        }
+        sent
+    }
+
+    /// Reliable broadcast - waits for ACK, retransmits on loss
+    /// Use for critical messages like match join/leave, chat
+    pub fn broadcast_reliable(&mut self, mux_key: u32, data: &[u8]) -> usize {
         let addrs: Vec<SocketAddr> = self
             .clients
             .iter()
